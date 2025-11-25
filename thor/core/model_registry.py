@@ -55,7 +55,7 @@ class ModelRegistry:
             input_params = model_cfg.get("input_params", {})
             model_kwargs = model_cfg.get("kwargs", {})
 
-            logging.info(f"Building model {model_name} with input params: {input_params}, kwargs {model_kwargs}")
+            logger.info(f"Building model {model_name} with input params: {input_params}, kwargs {model_kwargs}")
 
             model = self.get_model(model_type)(input_params, **model_kwargs)
 
@@ -68,7 +68,7 @@ class ModelRegistry:
             target_model = model_cfg.get("target_model", model_name)
 
             if ckpt is not None:
-                logging.info(f"Loading custom weight for {model_name} from {ckpt}")
+                logger.info(f"Loading custom weight for {model_name} from {ckpt}")
                 ckpt = torch.load(ckpt, map_location="cpu")
                 model_state_dict = extract_model_state_dict_from_ckpt(ckpt)[target_model]
 
@@ -81,12 +81,12 @@ class ModelRegistry:
 
                 # Add in all keys you want to copy the default param for
                 for copy_key in ckpt_copy:
-                    logging.info(f"Skipping model load for: {copy_key}")
+                    logger.info(f"Skipping model load for: {copy_key}")
                     model_state_dict[copy_key] = model.state_dict()[copy_key]
 
                 # Remap certain keys for multi sensor pretrain to single sensor finetune
                 for key, cfg_map in ckpt_remap.items():
-                    logging.info(f"Remapping key for custom load: {key}")
+                    logger.info(f"Remapping key for custom load: {key}")
                     old_val = model_state_dict.pop(key)
                     new_val = old_val
                     # Apply modifications
@@ -143,7 +143,7 @@ class ModelRegistry:
                         new_patch_size = _get_patch_size(ground_cover, **channels[channel_key])
 
                         if model_state_dict[patch_embed_key].shape[2:] != new_patch_size:
-                            logging.info(f"Resizing patch embed for {patch_embed_key}")
+                            logger.info(f"Resizing patch embed for {patch_embed_key}")
                             model_state_dict[patch_embed_key] = pi_resize_patch_embed(
                                 model_state_dict[patch_embed_key], new_patch_size
                             )
@@ -157,7 +157,7 @@ class ModelRegistry:
                         ref_pos_embed_key in model_state_dict
                         and model.state_dict()[ref_pos_embed_key].shape != model_state_dict[ref_pos_embed_key].shape
                     ):
-                        logging.info("interpolating pos_embed")
+                        logger.info("interpolating pos_embed")
 
                         # interpolating the ref pos embed (lowest GSD)
                         interpolate_pos_embed_thor(model, model_state_dict, ref_pos_embed_key)
@@ -176,24 +176,24 @@ class ModelRegistry:
                 missing_keys = model_keys - ckpt_keys
                 unexpected_keys = ckpt_keys - model_keys
 
-                logging.info(f"Key comparison for {model_name}:")
-                logging.info(f"  Model has {len(model_keys)} parameters")
-                logging.info(f"  Checkpoint has {len(ckpt_keys)} parameters")
+                logger.info(f"Key comparison for {model_name}:")
+                logger.info(f"  Model has {len(model_keys)} parameters")
+                logger.info(f"  Checkpoint has {len(ckpt_keys)} parameters")
 
                 if missing_keys:
-                    logging.info(f"  Missing from checkpoint ({len(missing_keys)} keys):")
+                    logger.info(f"  Missing from checkpoint ({len(missing_keys)} keys):")
                     for key in sorted(missing_keys):
                         shape = list(model.state_dict()[key].shape)
-                        logging.info(f"    - {key} {shape}")
+                        logger.info(f"    - {key} {shape}")
 
                 if unexpected_keys:
-                    logging.info(f"  Unexpected in checkpoint ({len(unexpected_keys)} keys):")
+                    logger.info(f"  Unexpected in checkpoint ({len(unexpected_keys)} keys):")
                     for key in sorted(unexpected_keys):
                         shape = list(model_state_dict[key].shape)
-                        logging.info(f"    + {key} {shape}")
+                        logger.info(f"    + {key} {shape}")
 
                 model.load_state_dict(model_state_dict, strict=strict)
-                logging.info(f"Custom weight loaded for {model_name}")
+                logger.info(f"Custom weight loaded for {model_name}")
 
                 if pos_embeds_needs_reinit:
                     model.init_embeds(pos_only=True)
