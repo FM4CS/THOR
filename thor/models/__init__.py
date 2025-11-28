@@ -2,10 +2,10 @@ from .basic_vit import *
 from .contrastive_loss_func_lc import *
 from .contrastive_loss_func_lc_v2 import *
 from .heads import *
-from .loss_func import *
 from .resnet_encoder import *
 from .sat_mae import *
 from .scale_vit import *
 from .thor_mae import *
 from .thor_vit import *
+from .uniformity_loss import *
 from .vit import *

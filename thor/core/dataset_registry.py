@@ -41,7 +41,7 @@ class DatasetRegistry:
     def build(self, dataset_cfg: dict[str, Any], split: str = "train") -> nn.Module:
         dataset_kwargs = dataset_cfg.get("kwargs", {})
 
-        logger.info(f"Dataset config: {dataset_cfg}")
+        logger.debug(f"Dataset config: {dataset_cfg}")
 
         build_cfg = dataset_cfg.copy()
         dataset_name = build_cfg.pop("name")
@@ -53,7 +53,7 @@ class DatasetRegistry:
 
         dataset_kwargs = build_cfg.get(f"{split}_kwargs", {})
 
-        logger.info(f"Building dataset {dataset_name} with kwargs: {dataset_kwargs}")
+        logger.debug(f"Building dataset {dataset_name} with kwargs: {dataset_kwargs}")
 
         if dataset_kwargs.get("custom_transform", None):
             transform_args = {"pretrain_transform": dataset_kwargs}

@@ -31,7 +31,7 @@ class ControlledConsistentRandomResizedCrop(T.RandomResizedCrop):
             tuple(T.transforms._setup_size(size, error_msg="Please provide only two dimensions (h, w) for size."))
             for size in sizes
         ]
-        print(f"Sizes: {self.sizes}, smallest size: {self.smallest_size}")
+        # print(f"Sizes: {self.sizes}, smallest size: {self.smallest_size}")
         self.count = 0
         super().__init__(self.smallest_size, scale=scale, ratio=ratio, interpolation=interpolation, antialias=antialias)
 
@@ -67,7 +67,7 @@ class ControlledConsistentRandomCrop(T.RandomCrop):
             tuple(T.transforms._setup_size(size, error_msg="Please provide only two dimensions (h, w) for size."))
             for size in sizes
         ]
-        print(f"Sizes: {self.sizes}, smallest size: {self.smallest_size}")
+        # print(f"Sizes: {self.sizes}, smallest size: {self.smallest_size}")
         self.count = 0
         super().__init__(
             self.smallest_size, padding=padding, pad_if_needed=pad_if_needed, fill=fill, padding_mode=padding_mode

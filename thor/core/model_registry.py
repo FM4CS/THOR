@@ -55,7 +55,7 @@ class ModelRegistry:
             input_params = model_cfg.get("input_params", {})
             model_kwargs = model_cfg.get("kwargs", {})
 
-            logger.info(f"Building model {model_name} with input params: {input_params}, kwargs {model_kwargs}")
+            logger.debug(f"Building model {model_name} with input params: {input_params}, kwargs {model_kwargs}")
 
             model = self.get_model(model_type)(input_params, **model_kwargs)
 

@@ -688,9 +688,9 @@ class THORDatasetBase:
                 if "INC" in product:
                     max_limit *= 2
                 if ground_cover // gsd < self.IMAGE_MIN_LIMIT or ground_cover // gsd > max_limit:
-                    # msg = f"Ground cover {ground_cover} is not valid for product {product} with GSD {gsd}"
-                    # f" due to image size being {ground_cover // gsd} and the product will not be used for this ground cover"
-                    # warnings.warn(msg, UserWarning)
+                    msg = f"Ground cover {ground_cover} is not valid for product {product} with GSD {gsd}"
+                    f" due to image size being {ground_cover // gsd} and the product will not be used for this ground cover"
+                    logger.debug(msg)
                     continue
                 else:
                     ground_cover_products[ground_cover].append(product)
@@ -1051,7 +1051,7 @@ class THORDatasetBase:
         self.cont_cons_rand_crops = {}
 
         for ground_cover in self.ground_covers:
-            logger.info(f"building transforms for ground cover: {ground_cover}")
+            logger.debug(f"building transforms for ground cover: {ground_cover}")
             custom_transforms[ground_cover] = {}
 
             # Assume the order is sorted from smallest to largest img_size b/c
@@ -1061,7 +1061,7 @@ class THORDatasetBase:
                 for product in products
                 if product in self.ground_cover_products[ground_cover]
             ]
-            logger.info(f"ground cover: {ground_cover}, img_sizes: {img_sizes}")
+            logger.debug(f"ground cover: {ground_cover}, img_sizes: {img_sizes}")
 
             cont_cons_rand_crop = ControlledConsistentRandomCrop(
                 img_sizes, pad_if_needed=True, padding_mode="constant", fill=0
@@ -1075,7 +1075,7 @@ class THORDatasetBase:
             i = 0
             for product in products:
                 if product not in self.ground_cover_products[ground_cover]:
-                    logger.info(f"skipping product: {product} for ground cover {ground_cover}")
+                    logger.debug(f"skipping product: {product} for ground cover {ground_cover}")
                     continue
 
                 t = []
@@ -1101,12 +1101,11 @@ class THORDatasetBase:
                     t.append(clamp_5_sigma)
 
                 if product_changes[product] != product:
-                    logger.info(f"resampling product: {product}, to: {product_changes[product]}")
                     # calculate resampled img size
                     (product_change_name, *_) = product_changes[product].split("-")
                     product_change_gsd = self.GSD(product_changes[product])
                     img_size = math.ceil(ground_cover / product_change_gsd)
-                    logger.info(f"image size: {img_size}")
+                    logger.info(f"resampling product: {product}, to: {product_changes[product]}, img_size: {img_size}")
                     t.append(
                         transforms.Resize(
                             (img_size, img_size),
@@ -1127,10 +1126,9 @@ class THORDatasetBase:
                     t.append(transforms.CenterCrop(img_sizes[i]))
 
                 custom_transforms[ground_cover][product] = transforms.Compose(t)
-                logger.info(f"transforms for product {product}: {custom_transforms[ground_cover][product]}")
+                logger.debug(f"transforms for product {product}: {custom_transforms[ground_cover][product]}")
                 i += 1
 
-            logger.info()
         return custom_transforms
 
     # stacked products
@@ -1330,7 +1328,7 @@ class THORDatasetBase:
         return thor_data
 
     def plot(self, sample, metadata: MetaData | None = None, num_samples=None):
-        B = sample[list(sample.keys())[0]].shape[0] if num_samples is None else num_samples
+        B = sample[next(iter(sample.keys()))].shape[0] if num_samples is None else num_samples
 
         filtered_products = (
             self.products
@@ -1338,16 +1336,13 @@ class THORDatasetBase:
             + (["dem"] if len(self.dem_products) > 0 else [])
             + (["INC"] if len(self.incidence_angle_products) else [])
         )
-        P = len(filtered_products)
-
-        fig, ax = plt.subplots(B, P, figsize=(P * 4, B * 4), squeeze=False)
-
         if any("S1" in p and "60m" in p for p in filtered_products) and any(
             "S1" in p and "10m" in p for p in filtered_products
         ):
             filtered_products = [p for p in filtered_products if not ("S1" in p and "60m" in p)]
 
-        fig, ax = plt.subplots(B, len(filtered_products), figsize=(len(filtered_products) * 4, B * 4), squeeze=False)
+        P = len(filtered_products)
+        fig, ax = plt.subplots(B, P, figsize=(P * 4, B * 4), squeeze=False)
 
         if metadata is not None:
             ground_cover = metadata.ground_cover
@@ -1360,11 +1355,11 @@ class THORDatasetBase:
                 metadata.s1_incidence_angles[0, 0].item() if metadata.s1_incidence_angles is not None else None
             )
             logger.info(
-                f"ground cover: {ground_cover}, center coords: {center_coords}, month: {month[0, 0].item()}, s1 orbit direction: {s1_orbit_direction}, s1 incidence angle: {s1_incidence_angles}"
+                f"ground cover: {ground_cover}, center coords: {center_coords[:num_samples].round(decimals=2)}, month: {month[0, 0].item()}, s1 orbit direction: {s1_orbit_direction}, s1 incidence angle: {s1_incidence_angles}"
             )
 
             fig.suptitle(
-                f"Ground cover: {ground_cover}m, Center coords: {center_coords}, Month: {month[0, 0].item()}, S1 orbit direction: {s1_orbit_direction}, S1 incidence angle: {s1_incidence_angles}",
+                f"Ground cover: {ground_cover}m, Center coords: {center_coords[:num_samples].round(decimals=2).tolist()}, Month: {month[0, 0].item()}, S1 orbit direction: {s1_orbit_direction}, S1 incidence angle: {s1_incidence_angles}",
                 fontsize=16,
             )
 

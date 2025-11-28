@@ -675,8 +675,7 @@ class THORIterableDatasetV2(IterableDataset, THORDatasetBase):
                                 scl_data = prod_img.SCL.values
                             except Exception as e:
                                 logger.error(
-                                    f"corrupt file error for SCL file path: {os.path.join(file_path, prod_imgs[product])}",
-                                    e,
+                                    f"corrupt file error for SCL file path: {os.path.join(file_path, prod_imgs[product])} error: {e}",
                                 )
                                 self._log_bad_hit(file_path, "corrupt_file_SCL", prod_imgs[product], product)
                                 found_all_products = False
@@ -707,8 +706,7 @@ class THORIterableDatasetV2(IterableDataset, THORDatasetBase):
                                 cloud_masks_scda2.append(cloud_mask)
                             except Exception as e:
                                 logger.error(
-                                    f"corrupt file error for cloud mask file path: {os.path.join(file_path, prod_imgs[product])}",
-                                    e,
+                                    f"corrupt file error for cloud mask file path: {os.path.join(file_path, prod_imgs[product])} error: {e}",
                                 )
                                 self._log_bad_hit(file_path, "corrupt_file_cloud_mask", prod_imgs[product], product)
                                 cloud_masks_scda2.append(np.zeros((img_size, img_size), dtype=np.bool_))
@@ -752,8 +750,7 @@ class THORIterableDatasetV2(IterableDataset, THORDatasetBase):
                             prod_img = prod_img.bands.values
                         except Exception as e:
                             logger.error(
-                                f"corrupt file error for prod file path: {os.path.join(file_path, prod_imgs[product])}",
-                                e,
+                                f"corrupt file error for prod file path: {os.path.join(file_path, prod_imgs[product])} , error: {e}",
                             )
                             self._log_bad_hit(file_path, f"corrupt_file_{product}", prod_imgs[product], product)
                             found_all_products = False
@@ -779,8 +776,7 @@ class THORIterableDatasetV2(IterableDataset, THORDatasetBase):
                                 slstr_snow_masks.append(snow_mask)
                             except Exception as e:
                                 logger.error(
-                                    f"corrupt file error for snow mask file path: {os.path.join(file_path, prod_imgs[product])}",
-                                    e,
+                                    f"corrupt file error for snow mask file path: {os.path.join(file_path, prod_imgs[product])} error: {e}",
                                 )
                                 self._log_bad_hit(file_path, "corrupt_file_snow_mask", prod_imgs[product], product)
                                 slstr_snow_masks.append(np.zeros((img_size, img_size), dtype=np.bool_))
@@ -943,8 +939,7 @@ class THORIterableDatasetV2(IterableDataset, THORDatasetBase):
 
             except Exception as e:
                 logger.error(
-                    f"load file error for land cover product file path: {file_path}, land cover product: {land_cover_product_gsd}",
-                    e,
+                    f"load file error for land cover product file path: {file_path}, land cover product: {land_cover_product_gsd} , error: {e}"
                 )
                 self._log_bad_hit(file_path, f"load_error_{land_cover_product}")
 
