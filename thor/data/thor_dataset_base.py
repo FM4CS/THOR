@@ -608,7 +608,7 @@ class THORDatasetBase:
             "S2-60m",
             "S1-10m",
         ],
-        discard_bands: list = [],
+        discard_bands: list | None = None,
         standardize: bool = False,
         full_return: bool = False,
         data_percent: float = 1.0,
@@ -622,6 +622,8 @@ class THORDatasetBase:
         random_seed: int = 42,
         **kwargs,
     ) -> None:
+        if discard_bands is None:
+            discard_bands = []
         if isinstance(ground_covers, int):
             ground_covers = [ground_covers]
         ground_covers = sorted(ground_covers)
@@ -642,7 +644,7 @@ class THORDatasetBase:
                 or not any(mode in product for mode in self.S1_MODES)
             ):
                 msg = f"S1 product {product} will be expanded to include all polarizations"
-                warnings.warn(msg, UserWarning)
+                warnings.warn(msg, UserWarning, stacklevel=2)
 
         self.product_changes = dict(
             zip(
@@ -992,6 +994,7 @@ class THORDatasetBase:
             warnings.warn(
                 f"Could not find any relevant files for provided path '{path}'. Path was ignored.",
                 UserWarning,
+                stacklevel=2,
             )
 
         split_tiles = None
@@ -1004,6 +1007,7 @@ class THORDatasetBase:
                 warnings.warn(
                     f"Could not find split file '{split_file}'. Ignoring split.",
                     UserWarning,
+                    stacklevel=2,
                 )
 
         process_func = partial(
@@ -1096,13 +1100,14 @@ class THORDatasetBase:
                         warnings.warn(
                             f"No normalization values found for product {product}, using mean=0.0, std=1.0",
                             UserWarning,
+                            stacklevel=2,
                         )
                     t.append(transforms.Normalize(mean, std))
                     t.append(clamp_5_sigma)
 
                 if product_changes[product] != product:
                     # calculate resampled img size
-                    (product_change_name, *_) = product_changes[product].split("-")
+                    # (_product_change_name, *_) = product_changes[product].split("-")
                     product_change_gsd = self.GSD(product_changes[product])
                     img_size = math.ceil(ground_cover / product_change_gsd)
                     logger.info(f"resampling product: {product}, to: {product_changes[product]}, img_size: {img_size}")

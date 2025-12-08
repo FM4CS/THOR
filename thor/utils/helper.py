@@ -9,12 +9,14 @@ from tqdm import tqdm
 
 def safe_copy(tensor_dict):
     if not isinstance(tensor_dict, dict):
-        raise ValueError("Input should be a dictionary")
+        msg = "Input should be a dictionary"
+        raise ValueError(msg)
 
     new_dict = {}
     for key, tensor in tensor_dict.items():
         if not isinstance(tensor, torch.Tensor):
-            raise ValueError(f"Value for key '{key}' is not a PyTorch tensor")
+            msg = f"Value for key '{key}' is not a PyTorch tensor"
+            raise ValueError(msg)
         new_dict[key] = tensor.detach().clone().cpu()
     return new_dict
 

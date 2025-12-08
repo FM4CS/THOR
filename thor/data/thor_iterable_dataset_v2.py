@@ -78,7 +78,7 @@ class THORIterableDatasetV2(IterableDataset, THORDatasetBase):
             "S2-60m",
             "S1-10m",
         ],
-        discard_bands: list = [],
+        discard_bands: list | None = None,
         standardize: bool = True,
         full_return: bool = False,
         data_percent: float = 1.0,
@@ -98,7 +98,7 @@ class THORIterableDatasetV2(IterableDataset, THORDatasetBase):
         land_cover_products: list[str] | None = None,
         land_cover_dir: str | None = None,
         multilook_S1=False,
-        S1_multilook_factors=[1, 2, 3, 4],
+        S1_multilook_factors=None,
         dem_products: list[str] | None = None,
         dem_dir: str | None = None,
         dem_normalize: dict[
@@ -112,6 +112,10 @@ class THORIterableDatasetV2(IterableDataset, THORDatasetBase):
         aggregate_incidence_angle=False,
         **kwargs,
     ):
+        if S1_multilook_factors is None:
+            S1_multilook_factors = [1, 2, 3, 4]
+        if discard_bands is None:
+            discard_bands = []
         if isinstance(ground_covers, int):
             ground_covers = [ground_covers]
         ground_covers = sorted(ground_covers)
@@ -1156,7 +1160,8 @@ class THORIterableDatasetV2(IterableDataset, THORDatasetBase):
                     elif normalize == "none":
                         pass
                     else:
-                        raise ValueError(f"Unknown normalization type: {normalize}")
+                        msg = f"Unknown normalization type: {normalize}"
+                        raise ValueError(msg)
 
                     return arr
 

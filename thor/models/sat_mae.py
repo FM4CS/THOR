@@ -194,7 +194,7 @@ class SatMAE(SatViTEncoder):
 
     def forward_encoder(self, x, mask_ratio):
         # x is (N, C, H, W)
-        b, c, h, w = x.shape
+        b, _c, _h, _w = x.shape
 
         x_c_embed = []
         current = 0
@@ -296,7 +296,7 @@ class SatMAE(SatViTEncoder):
 
         # predictor projection
         x_c_patch = []
-        for i, group in enumerate(self.channel_groups):
+        for i, _group in enumerate(self.channel_groups):
             x_c = x[:, i]  # (N, L, D)
             dec = self.decoder_pred[i](x_c)  # (N, L, g_c * p^2)
             dec = dec.view(N, x_c.shape[1], -1, int(self.patch_size**2))  # (N, L, g_c, p^2)
@@ -340,7 +340,7 @@ class SatMAE(SatViTEncoder):
     def forward(self, imgs, mask_ratio, spectral_mask_ratio):
         # Group the images here
         x_c = []
-        for i, group in enumerate(self.channel_groups):
+        for _i, group in enumerate(self.channel_groups):
             for band in group:
                 x_c.append(imgs[band])
         x_c = torch.cat(x_c, dim=1)

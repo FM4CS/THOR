@@ -1,5 +1,3 @@
-import typing as T
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -10,12 +8,13 @@ from thor.core.serialization import read_yaml
 from thor.core.transform_registry import PRETRAIN_TRANSFORMS
 
 
-def visualize_RGB_tensor(tensor: torch.Tensor, bound: tuple[int] = None):
+def visualize_RGB_tensor(tensor: torch.Tensor, bound: tuple[int] | None = None):
     if tensor.dim() == 3:
         tensor = tensor[None, ...]
 
     if tensor.shape[1] != 3 and tensor.shape[1] != 1:
-        raise ValueError(f"Channel dimension of the RGB tensor must be 3 or 1 but get {tensor.shape[1]}")
+        msg = f"Channel dimension of the RGB tensor must be 3 or 1 but get {tensor.shape[1]}"
+        raise ValueError(msg)
 
     np_imgs = tensor.permute(0, 2, 3, 1).detach().cpu().numpy()
     num_img = np_imgs.shape[0]
@@ -41,8 +40,8 @@ def visualize_transform(
     transform_names: list[str],
     n_sample: int,
     random: bool = False,
-    channel_group: list[list[int]] = [[0, 1, 2]],
-    bound: list[list[int]] = [[0, 1]],
+    channel_group: list[list[int]] | None = None,
+    bound: list[list[int]] | None = None,
 ):
     """Visualize transformation on a dataset
 
@@ -57,8 +56,13 @@ def visualize_transform(
         bound (T.List[T.List[int]], optional): Upper and lower limit of the number, should have same length as channel_group.
             Defaults to [[0, 1]].
     """
+    if bound is None:
+        bound = [[0, 1]]
+    if channel_group is None:
+        channel_group = [[0, 1, 2]]
     if len(channel_group) != len(bound):
-        raise ValueError(f"Length of channel_group is {len(channel_group)}, but only have {len(bound)} bound")
+        msg = f"Length of channel_group is {len(channel_group)}, but only have {len(bound)} bound"
+        raise ValueError(msg)
 
     n_group = len(channel_group)
     n_data = len(dataset)
@@ -85,7 +89,7 @@ def visualize_transform(
         x = dataset[i][0]
         full_np_imgs = x.permute(1, 2, 0).detach().cpu().numpy()
         transform_imgs = [t(x) for t in transforms]
-        for group_idx, group_bound in zip(channel_group, bound):
+        for group_idx, group_bound in zip(channel_group, bound, strict=False):
             img_min, img_max = group_bound
 
             np_img = full_np_imgs[:, :, group_idx]

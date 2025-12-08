@@ -98,7 +98,7 @@ class ConvStem(nn.Module):
         # build stem, similar to the design in https://arxiv.org/abs/2106.14881
         stem = []
         input_dim, output_dim = in_chans, embed_dim // 8
-        for l in range(4):
+        for _l in range(4):
             stem.append(nn.Conv2d(input_dim, output_dim, kernel_size=3, stride=2, padding=1, bias=False))
             stem.append(nn.BatchNorm2d(output_dim))
             stem.append(nn.ReLU(inplace=True))
@@ -110,7 +110,7 @@ class ConvStem(nn.Module):
         self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, H, W = x.shape
         assert H == self.img_size[0] and W == self.img_size[1], (
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
         )
@@ -122,7 +122,7 @@ class ConvStem(nn.Module):
 
 
 @MODELS.register()
-def vit_small_encoder(pretrained: bool = False, num_channels=3, rgb_map: dict[str, int] = None, **kwargs):
+def vit_small_encoder(pretrained: bool = False, num_channels=3, rgb_map: dict[str, int] | None = None, **kwargs):
     variant = "vit_small_patch16_224"
 
     # config for ViT small
@@ -204,7 +204,7 @@ def vit_base_encoder(pretrained: bool = False, **kwargs):
 
 
 @MODELS.register()
-def vit_large_encoder(pretrained: bool = False, num_channels=3, rgb_map: dict[str, int] = None, **kwargs):
+def vit_large_encoder(pretrained: bool = False, num_channels=3, rgb_map: dict[str, int] | None = None, **kwargs):
     variant = "vit_large_patch16_224"
 
     model_kwargs = dict(
@@ -286,7 +286,7 @@ def vit_huge_encoder(pretrained: bool = False, **kwargs):
 @MODELS.register()
 def vit_conv_small_encoder(**kwargs):
     if kwargs.pop("pretrained", False):
-        warnings.warn("ViT conv does not have ImageNet pre-trained weight. Initialize with random.")
+        warnings.warn("ViT conv does not have ImageNet pre-trained weight. Initialize with random.", stacklevel=2)
     # minus one ViT block
     model = VisionTransformerMoCo(
         patch_size=16,
@@ -308,7 +308,7 @@ def vit_conv_small_encoder(**kwargs):
 @MODELS.register()
 def vit_conv_base_encoder(**kwargs):
     if kwargs.pop("pretrained", False):
-        warnings.warn("ViT conv does not have ImageNet pre-trained weight. Initialize with random.")
+        warnings.warn("ViT conv does not have ImageNet pre-trained weight. Initialize with random.", stacklevel=2)
     # minus one ViT block
     model = VisionTransformerMoCo(
         patch_size=16,

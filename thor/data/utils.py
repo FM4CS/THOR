@@ -57,7 +57,7 @@ def build_index(dataset_cfg: dict | str | Path, num_workers=7):
     torch.manual_seed(402)  # 22)
     for sample_b in tqdm(dataloader, total=len(dataloader), desc="Building dataset"):
         sample = sample_b[0]
-        file_path, gdf, total_area, success = sample
+        file_path, _gdf, total_area, success = sample
         if not success:
             misses += 1
             misses_files.append(str(file_path))

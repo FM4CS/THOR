@@ -279,7 +279,7 @@ class FootprintBuilder(Dataset, THORDatasetBase):
             )
         return new_footprint
 
-    def get_data_concave_hull(self, img_path: str, netcdf_group: str = None, ratio=0.1) -> Polygon | None:
+    def get_data_concave_hull(self, img_path: str, netcdf_group: str | None = None, ratio=0.1) -> Polygon | None:
         """
         Load data from image file and compute its concave hull.
 
@@ -341,7 +341,7 @@ class FootprintBuilder(Dataset, THORDatasetBase):
                 logger.warning(f"Error computing data concave hull for {img_path}: {e}")
             return None
 
-    def get_enhanced_footprint(self, prod_img_meta, crop_crs_wkt, img_path: str, netcdf_group: str = None):
+    def get_enhanced_footprint(self, prod_img_meta, crop_crs_wkt, img_path: str, netcdf_group: str | None = None):
         """
         Enhanced footprint generation combining metadata footprint with data concave hull.
 
@@ -679,14 +679,15 @@ class FootprintBuilder(Dataset, THORDatasetBase):
     def _get_samples(node):
         # Sanity checks
         if not isinstance(node, Leaf):
-            warnings.warn(f"Node is not a leaf node, but a {type(node)}")
+            warnings.warn(f"Node is not a leaf node, but a {type(node)}", stacklevel=2)
 
         _iter_node = node
         _iter_node_parent = _iter_node.parent
         while _iter_node_parent.footprint is not None:
             if (_iter_node.footprint.area.item() - _iter_node_parent.footprint.area.item()) > 100:
                 warnings.warn(
-                    f"Child footprint is larger than parent footprint, node parent file: {_iter_node_parent.file} \n {_iter_node_parent}"
+                    f"Child footprint is larger than parent footprint, node parent file: {_iter_node_parent.file} \n {_iter_node_parent}",
+                    stacklevel=2,
                 )
                 break
             # _iter_node = _iter_node_parent

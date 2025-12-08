@@ -12,8 +12,10 @@ from thor.utils.pos_embed import get_1d_sincos_pos_embed_from_grid, get_2d_sinco
 class SatVitEncoderRGB(timm.models.vision_transformer.VisionTransformer):
     """Vision Transformer with support for global average pooling"""
 
-    def __init__(self, global_pool=False, channel_groups=[], **kwargs):
-        super(SatVitEncoderRGB, self).__init__(**kwargs)
+    def __init__(self, global_pool=False, channel_groups=None, **kwargs):
+        if channel_groups is None:
+            channel_groups = []
+        super().__init__(**kwargs)
 
         self.channel_groups = channel_groups
 
@@ -47,7 +49,7 @@ class SatVitEncoderRGB(timm.models.vision_transformer.VisionTransformer):
 
     def forward(self, imgs):
         x_c = []
-        for i, group in enumerate(self.channel_groups):
+        for _i, group in enumerate(self.channel_groups):
             for band in group:
                 x_c.append(imgs[band])
         x = torch.cat(x_c, dim=1)
@@ -111,7 +113,7 @@ class SatViTEncoder(nn.Module):
         self.channel_cls_embed.data.copy_(channel_cls_embed.float().unsqueeze(0))
 
     def forward_encoder(self, x):
-        b, c, h, w = x.shape
+        b, _c, _h, _w = x.shape
 
         x_c_embed = []
         current = 0
@@ -122,7 +124,7 @@ class SatViTEncoder(nn.Module):
             x_c_embed.append(self.patch_embed[i](x[:, interval, :, :]))  # (N, L, D)
 
         x = torch.stack(x_c_embed, dim=1)  # (N, G, L, D)
-        _, G, L, D = x.shape
+        _, _G, _L, D = x.shape
 
         # add channel embed
         channel_embed = self.channel_embed.unsqueeze(2)  # (1, c, 1, cD)
@@ -151,7 +153,7 @@ class SatViTEncoder(nn.Module):
 
     def forward(self, imgs):
         x_c = []
-        for i, group in enumerate(self.channel_groups):
+        for _i, group in enumerate(self.channel_groups):
             for band in group:
                 x_c.append(imgs[band])
         x = torch.cat(x_c, dim=1)

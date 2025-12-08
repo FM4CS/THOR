@@ -126,7 +126,7 @@ def train(cfg):
 
 
 def test(cfg):
-    gpus, nodes, job_id = get_lumi_config()
+    gpus, nodes, _job_id = get_lumi_config()
     cfg = read_yaml(cfg)
     trainer_cfg = cfg["training"]["trainer"]
 

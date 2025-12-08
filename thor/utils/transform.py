@@ -29,7 +29,7 @@ class RandomContrast:
 
 @PRETRAIN_TRANSFORMS.register()
 class RandomBrightness:
-    def __init__(self, max_b: float = 0, clamp: tuple[float] = None) -> None:
+    def __init__(self, max_b: float = 0, clamp: tuple[float] | None = None) -> None:
         self.max_b = max_b
         self.clamp = clamp
 
@@ -54,7 +54,8 @@ class ProductDropout:
 
     def __call__(self, scene: torch.Tensor) -> torch.Tensor:
         if scene.shape[1] != sum(self.group):
-            raise ValueError("Number of group {sum(group)} not equal to number of channel {a.shape[1]}")
+            msg = "Number of group {sum(group)} not equal to number of channel {a.shape[1]}"
+            raise ValueError(msg)
 
         out = None
         if self.training:
@@ -107,7 +108,7 @@ class RandomFlip:
 
 @PRETRAIN_TRANSFORMS.register()
 class RandomRotate:
-    def __init__(self, group: list[int] = None) -> None:
+    def __init__(self, group: list[int] | None = None) -> None:
         """Assuming Last two dimension is [H, W]"""
         self.group = group
 
@@ -184,7 +185,8 @@ class ImagePatchMask:
         self.num_patch = patch_per_side * patch_per_side
 
         if img_size % patch_per_side != 0:
-            raise ValueError("Image size must be divisible by patch per side.")
+            msg = "Image size must be divisible by patch per side."
+            raise ValueError(msg)
 
         self.patch_size = img_size // patch_per_side
 

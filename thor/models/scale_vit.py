@@ -107,7 +107,6 @@ def get_1d_sincos_pos_embed_from_grid_torch(embed_dim, pos):
     out: (M, D)
     """
     assert embed_dim % 2 == 0
-    old_shape = pos
     omega = torch.arange(embed_dim // 2, dtype=torch.float32, device=pos.device)
     omega /= embed_dim / 2.0
     omega = 1.0 / 10000**omega  # (D/2,)
@@ -180,7 +179,7 @@ class PatchEmbedUnSafe(PatchEmbed):
     """Image to Patch Embedding"""
 
     def forward(self, x):
-        B, C, H, W = x.shape
+        _B, _C, _H, _W = x.shape
         # Dropped size check in timm
         # assert H == self.img_size[0] and W == self.img_size[1], \
         #     f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
@@ -196,10 +195,12 @@ class ScaleVitEncoder(timm.models.vision_transformer.VisionTransformer):
         global_pool=False,
         embed_dim=1024,
         channel_groups=None,
-        channel_group_gsds=[],
+        channel_group_gsds=None,
         norm_layer=nn.LayerNorm,
         **kwargs,
     ):
+        if channel_group_gsds is None:
+            channel_group_gsds = []
         super().__init__(embed_dim=embed_dim, **kwargs)
 
         self.channel_group_gsds = [torch.tensor([gsd], requires_grad=False) for gsd in channel_group_gsds]
@@ -221,7 +222,7 @@ class ScaleVitEncoder(timm.models.vision_transformer.VisionTransformer):
             torch.zeros(1, len(channel_groups), num_patches + 1, embed_dim), requires_grad=False
         )
         pos_embed = []
-        for i, group in enumerate(self.channel_groups):
+        for i, _group in enumerate(self.channel_groups):
             # Build the pos embed for each group (which is of different GSD)
             input_res = self.channel_group_gsds[i]
             print(input_res.shape)
@@ -241,7 +242,7 @@ class ScaleVitEncoder(timm.models.vision_transformer.VisionTransformer):
             del self.norm  # remove the original norm
 
     def forward_features(self, x, input_res=None):
-        B, _, h, w = x.shape
+        B, _, _h, _w = x.shape
 
         x_c_embed = []
         current = 0
@@ -253,7 +254,7 @@ class ScaleVitEncoder(timm.models.vision_transformer.VisionTransformer):
             x_c_embed.append(patch)  # (N, L, D)
 
         x = torch.stack(x_c_embed, dim=1)  # (N, G, L, D)
-        _, G, L, D = x.shape
+        _, _G, _L, D = x.shape
 
         pos_embed = self.pos_embed[:, :, 1:, :]
 
@@ -272,7 +273,7 @@ class ScaleVitEncoder(timm.models.vision_transformer.VisionTransformer):
 
     def forward(self, imgs, input_res=None):
         x_c = []
-        for i, group in enumerate(self.channel_groups):
+        for _i, group in enumerate(self.channel_groups):
             for band in group:
                 x_c.append(imgs[band])
         x = torch.cat(x_c, dim=1)
@@ -285,8 +286,10 @@ class ScaleVitEncoderRGB(timm.models.vision_transformer.VisionTransformer):
     """Vision Transformer with support for global average pooling"""
 
     def __init__(
-        self, global_pool=False, patch_size=16, channel_groups=[], in_chans=4, input_res=1, embed_dim=1024, **kwargs
+        self, global_pool=False, patch_size=16, channel_groups=None, in_chans=4, input_res=1, embed_dim=1024, **kwargs
     ):
+        if channel_groups is None:
+            channel_groups = []
         super().__init__(embed_dim=embed_dim, **kwargs)
 
         self.channel_groups = channel_groups
@@ -318,7 +321,7 @@ class ScaleVitEncoderRGB(timm.models.vision_transformer.VisionTransformer):
             del self.norm  # remove the original norm
 
     def forward_features(self, x):
-        B, _, h, w = x.shape
+        B, _, _h, _w = x.shape
         x = self.patch_embed(x)
 
         cls_tokens = self.cls_token.expand(B, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
@@ -333,7 +336,7 @@ class ScaleVitEncoderRGB(timm.models.vision_transformer.VisionTransformer):
 
     def forward(self, imgs):
         x_c = []
-        for i, group in enumerate(self.channel_groups):
+        for _i, group in enumerate(self.channel_groups):
             for band in group:
                 x_c.append(imgs[band])
         x = torch.cat(x_c, dim=1)

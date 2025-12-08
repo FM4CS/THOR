@@ -34,7 +34,8 @@ class BasePretrainTask(pl.LightningModule):
         optimizer_cfg = self.training_cfg.get("optimizer_cfg", {"lr": 0.001})
 
         if "lr" not in optimizer_cfg:
-            raise KeyError("You must provide learning rate in optimizer cfg")
+            msg = "You must provide learning rate in optimizer cfg"
+            raise KeyError(msg)
 
         if optimizer_name == "Adam":
             optimizer_class = optim.Adam
@@ -43,9 +44,8 @@ class BasePretrainTask(pl.LightningModule):
         elif optimizer_name == "AdamW":
             optimizer_class = optim.AdamW
         else:
-            raise ValueError(
-                f"{optimizer_name} is not supported, add it to configure_optimizers in base lightning class."
-            )
+            msg = f"{optimizer_name} is not supported, add it to configure_optimizers in base lightning class."
+            raise ValueError(msg)
 
         optimizer = optimizer_class(self.parameters(), **optimizer_cfg)
 
@@ -131,9 +131,8 @@ class BaseDownstreamTask(BasePretrainTask):
         elif self.scheduler_name in [None, "Cosine", "Poly"]:
             return optimizer
         else:
-            raise ValueError(
-                f"{self.scheduler_name} is not supported, add it to configure_optimizers in BaseDownstreamTask."
-            )
+            msg = f"{self.scheduler_name} is not supported, add it to configure_optimizers in BaseDownstreamTask."
+            raise ValueError(msg)
 
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
         """Overwrite with warmup epoch and manual lr decay"""

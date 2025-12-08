@@ -1,0 +1,542 @@
+exp_name: pretrain_thor_base_lumi_subset_contrast_lc_flexivit_encoder_alibi_decoder_abs_pos_embed_patch_dv6_wc_masked_era5_dem_finale
+version: 100
+task: 'PretrainThorMAE'
+random_seed: 42
+
+mixed_precision: true
+
+training:
+  batch_size: 32
+  # train loader
+  train_loader_worker: 6
+  eval_loader_worker: 6
+  #optimizer
+  optimizer: "AdamW"
+  optimizer_cfg:
+    lr: 0.0003
+    weight_decay: 0.05
+  warmup_epoch: 20
+  scheduler: "Cosine"
+  trainer:
+    # GPU config
+    gpus: 64
+    strategy: ddp
+    unused_params: true
+    # Logging config
+    save_dir: THOR/results/pretraining
+    # Callbacks
+    save_top_k: 10 # checkpointing
+    monitor_metric: "train_loss_epoch"
+    monitor_mode: "min"
+    patience: 25 # early stop
+    # Misc
+    gradient_clip_val: 0.5
+    limit_train_batches: 1.0
+    enable_model_summary: true
+    max_epochs: 400
+    accumulated_batches: 1
+    resume_ckpt: null
+
+  era5_lambda: 0.1
+  uniformity_loss: false
+  uniformity_lambda: 0.01
+  contrastive_lambda: 0.1
+  fft_lambda: 0.01
+  month_lambda: 0.1
+  latlon_lambda: 0.1
+  orbit_direction_lambda: 0.1
+  incidence_angle_lambda: 0.1
+  recon_lambda: 1.5
+  land_cover_lambdas:
+    SCL: 0.05
+    WC: 0.1
+    GC: 0.1
+    MCD: 0.1
+    dem: 0.1
+  log_land_cover_pred: true
+  mae:
+    mask_ratio: 0.75
+    spectral_mask_ratio: 0.75
+    log_img_per_steps: 500
+
+dataset:
+  name: "THORIterableDatasetV2"
+  train_kwargs:
+    paths: "/nr/bamjo/jodata5/pro/fm4cs/data/lumi/v6_all"
+    land_cover_dir: "/nr/bamjo/jodata5/pro/fm4cs/data/lumi/world_cover"
+    dem_dir: "/nr/bamjo/jodata5/pro/fm4cs/data/lumi/dem"
+    era5_data_dir: "/nr/bamjo/jodata5/pro/fm4cs/data/lumi/era5_daily_netcdf"
+    dem_products:
+      - dem-10m
+      - dem-60m
+    dem_normalize:
+      elevation: local_min
+      slope: none
+    dem_type: "both"
+    kml_grid_path: null
+    split: train
+    standardize: true
+    overwrite: false
+    ground_covers:
+      - 960
+      - 1440
+      - 1920
+      - 2880
+      - 3360 
+      - 4800
+      - 5760
+      - 7680
+      - 9600
+      - 11520
+      - 14400
+      - 19200
+      - 23040
+      - 28800
+      - 30720
+      - 46080 # m
+    ground_cover_weights:
+      - 0.2 # 960
+      - 0.2 # 1440
+      - 0.2 # 1920
+      - 0.2 # 2880
+      - 0.1 # 3360
+      - 0.1 # 4800
+      - 0.1 # 5760
+      - 0.1 # 7680
+      - 0.1 # 9600
+      - 0.1 # 11520
+      - 0.1 # 14400
+      - 0.1 # 19200 
+      - 0.05 # 23040
+      - 0.05 # 28800
+      - 0.05 # 30720
+      - 0.05 # 46080 # m
+    data_percent: 1.0
+    era5_data: true
+    era5_land_products:
+      - volumetric_soil_water_layer_1
+      - volumetric_soil_water_layer_4
+      - skin_temperature
+      - dewpoint_temperature_2m
+      - temperature_2m
+      - soil_temperature_level_1
+      - soil_temperature_level_4
+      - snow_cover
+      - snow_depth_water_equivalent
+      - snowfall_sum
+      - snow_depth
+      - leaf_area_index_high_vegetation
+      - leaf_area_index_low_vegetation
+      - surface_pressure
+      - total_precipitation_sum
+      - surface_runoff_sum
+      - total_evaporation_sum
+    sample_ratio: 0.003
+    weighted_sampling: false
+    important_products: ["S1", "S2"]
+    multilook_S1: true
+    S1_multilook_factors: [1, 2, 3, 4]
+    use_incidence_angle: true
+    aggregate_incidence_angle: true
+    land_cover_products:
+      SCL-20m: null
+      WC-10m : null
+      GC-250m : GC-240m
+      MCD-500m: MCD-480m
+    products: 
+        S2-10m : null
+        S2-20m : null
+        S2-60m : null
+        S1-IW-VV-10m : null
+        S1-IW-HH-10m : null 
+        S1-IW-VV-60m : null
+        S1-IW-HH-60m : null 
+        S1-EW-VV-10m : null
+        S1-EW-HH-10m : null 
+        S1-EW-VV-60m : null
+        S1-EW-HH-60m : null 
+        S3-250m : S3-240m # Interpolating on the fly
+        S3-500m : S3-480m # Interpolating on the fly
+        S3-1000m : S3-960m # Interpolating on the fly
+
+models:
+  mae:
+    type: thor_mae_base_alibi_patch_size_embed_v1
+    strict: true
+
+    kwargs:
+      norm_pix_loss: false
+
+    input_params:
+      ground_covers:
+        - 960
+        - 1440
+        - 1920
+        - 2880
+        - 3360 
+        - 4800
+        - 5760
+        - 7680
+        - 9600
+        - 11520
+        - 14400
+        - 19200
+        - 23040
+        - 28800
+        - 30720
+        - 46080 # m
+      masking_schema:
+        spatial: random_same_ratio
+        spectral: all
+      aggr_type: 'subsetmean'
+      use_superposition_encoding: false
+      use_fuzzy_encoding: false
+      use_fft_loss: true
+      predict_month: true
+      predict_location: true
+      predict_orbit_direction: true
+      predict_incidence_angle: true
+      use_contrastive_loss: true
+      encoder_pos_type: "alibi"
+      decoder_pos_type: "absolute_res"
+      cls_token_type: "pooled"
+      use_flexivit: true
+      flexivit_ref_patch_size: 4
+      flexivit_ref_grid_size: 14
+      flexivit_token_budget: 1296
+      flexivit_decoder_type: "conv"
+      flexivit_patch_size_seqs:
+        - 4
+        - 5
+        - 6
+        - 7 
+        - 8
+        - 9
+        - 10
+        - 12
+        - 15
+        - 16
+        - 18
+        - 20
+        - 24
+        - 30
+        - 32
+      era5_return_dict: false
+      era5_land_products:
+        - volumetric_soil_water_layer_1
+        - volumetric_soil_water_layer_4
+        - skin_temperature
+        - dewpoint_temperature_2m
+        - temperature_2m
+        - soil_temperature_level_1
+        - soil_temperature_level_4
+        - snow_cover
+        - snow_depth_water_equivalent
+        - snowfall_sum
+        - snow_depth
+        - leaf_area_index_high_vegetation
+        - leaf_area_index_low_vegetation
+        - surface_pressure
+        - total_precipitation_sum
+        - surface_runoff_sum
+        - total_evaporation_sum
+      contrast_min_num_patches: 6
+      max_contrastive_groups: 100
+      min_process_ratio: 0.5
+      use_local_dist: false
+      contrastive_loss:
+        type: "land_cover_v2"
+        num_samples: 3
+        tau: 0.07
+        eps: 1.0e-8
+        pixel_ratio: 0.5
+        norm_type: "l2"
+
+      log_per_group: False
+
+      land_cover_tasks:
+        SCL:
+          num_classes: 12
+          gsd: 20
+          loss_type: "cross_entropy"
+          max_pred_patch_size: 32
+          loss_on_patches: all
+          label_smoothing: 0.1 
+          groups:
+            "S2:*":
+              ignore: [0, 1, 2, 7, 8]
+              patch_size: 16
+            "S1:*":
+              ignore: [0, 1, 2, 3, 7, 8, 9, 10]
+              patch_size: 16
+        WC:
+          num_classes: 12
+          gsd: 10
+          loss_type: "cross_entropy"
+          max_pred_patch_size: 32
+          loss_on_patches: all
+          label_smoothing: 0.1 
+          groups:
+            "S2:*":
+              ignore: [0]
+              patch_size: 16
+            "S1:*":
+              ignore: [0]
+              patch_size: 16
+        GC:
+          num_classes: 23
+          gsd: 240
+          loss_type: "cross_entropy"
+          max_pred_patch_size: 32
+          loss_on_patches: all
+          label_smoothing: 0.1 
+          groups:
+            "S3:Oa[0-9][0-9]_reflectance":
+              ignore: [0]
+              patch_size: 16
+        MCD:
+          num_classes: 18
+          gsd: 480
+          loss_type: "cross_entropy"
+          max_pred_patch_size: 32
+          loss_on_patches: all
+          label_smoothing: 0.1 
+          groups:
+            "S3:S[0-9]_reflectance_an":
+              ignore: [0]
+              patch_size: 16
+        dem:
+          num_classes: 2
+          gsd: 10
+          loss_type: "mse"
+          max_pred_patch_size: 32
+          loss_on_patches: all
+          groups:
+            "S2:*":
+              patch_size: 16
+            "S1:*":
+              patch_size: 16
+
+      groups: 
+        - ['S2:Red', 'S2:Green', 'S2:Blue', 'S2:NIR']
+        - ['S2:RE1', 'S2:RE2', 'S2:RE3', 'S2:RE4', 'S2:SWIR1', 'S2:SWIR2']
+        - ['S2:CoastAerosal', 'S2:WaterVapor']
+        - ['S1:IW-VH', 'S1:IW-VV', 'S1:EW-VH', 'S1:EW-VV']
+        - ['S1:IW-HV', 'S1:IW-HH', 'S1:EW-HV', 'S1:EW-HH']
+        - ['S3:Oa01_reflectance', 'S3:Oa02_reflectance', 'S3:Oa03_reflectance', 'S3:Oa04_reflectance', 'S3:Oa05_reflectance', 'S3:Oa06_reflectance', 'S3:Oa07_reflectance'] 
+        - ['S3:Oa08_reflectance', 'S3:Oa09_reflectance', 'S3:Oa10_reflectance', 'S3:Oa11_reflectance', 'S3:Oa12_reflectance', 'S3:Oa13_reflectance', 'S3:Oa14_reflectance']
+        - ['S3:Oa15_reflectance', 'S3:Oa16_reflectance', 'S3:Oa17_reflectance', 'S3:Oa18_reflectance', 'S3:Oa19_reflectance', 'S3:Oa20_reflectance', 'S3:Oa21_reflectance']
+        - ['S3:S1_reflectance_an', 'S3:S2_reflectance_an', 'S3:S3_reflectance_an', 'S3:S4_reflectance_an', 'S3:S5_reflectance_an', 'S3:S6_reflectance_an']
+        - ['S3:S7_BT_in', 'S3:S8_BT_in', 'S3:S9_BT_in']
+
+      channels:
+        "S2:Red":
+          GSD: 10
+          patch_size: 16 # px
+        
+        "S2:Green":
+          GSD: 10
+          patch_size: 16 # px
+        
+        "S2:Blue":
+          GSD: 10
+          patch_size: 16 # px
+
+        "S2:NIR":
+          GSD: 10
+          patch_size: 16 # px
+
+        "S2:RE1":
+          GSD: 20
+          patch_size: 16 # px
+        
+        "S2:RE2":
+          GSD: 20
+          patch_size: 16 # px
+
+        "S2:RE3": 
+          GSD: 20
+          patch_size: 16 # px
+
+        "S2:RE4": 
+          GSD: 20
+          patch_size: 16 # px
+
+        "S2:SWIR1":
+          GSD: 20
+          patch_size: 16 # px
+          
+        "S2:SWIR2":
+          GSD: 20
+          patch_size: 16 # px
+
+        "S2:CoastAerosal":
+          GSD: 60
+          patch_size: 16 # px
+
+        "S2:WaterVapor":
+          GSD: 60
+          patch_size: 16 # px
+
+
+        "S1:IW-VV":
+          GSD: 10
+          patch_size: 16 # px
+          patch_embed_name: "S1:VV"
+
+        "S1:IW-VH":
+          GSD: 10
+          patch_size: 16 # px
+          patch_embed_name: "S1:VH"
+
+        "S1:IW-HV":
+          GSD: 10
+          patch_size: 16 # px
+          patch_embed_name: "S1:HV"
+
+        "S1:IW-HH":
+          GSD: 10
+          patch_size: 16 # px
+          patch_embed_name: "S1:HH"
+
+        "S1:EW-VV":
+          GSD: 10
+          patch_size: 16 # px
+          patch_embed_name: "S1:VV"
+          
+        "S1:EW-VH":
+          GSD: 10
+          patch_size: 16 # px
+          patch_embed_name: "S1:VH"
+          
+        "S1:EW-HV":
+          GSD: 10
+          patch_size: 16 # px
+          patch_embed_name: "S1:HV"
+
+        "S1:EW-HH":
+          GSD: 10
+          patch_size: 16 # px
+          patch_embed_name: "S1:HH"
+
+
+        "S3:Oa01_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa02_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa03_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa04_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa05_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa06_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+
+        "S3:Oa07_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa08_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa09_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa10_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa11_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa12_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa13_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa14_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa15_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa16_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa17_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa18_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa19_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa20_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:Oa21_reflectance":
+          GSD: 240 # GSD 240 interp
+          patch_size: 16 # px
+          
+        "S3:S1_reflectance_an":
+          GSD: 480 # GSD 480 interp
+          patch_size: 16 # px
+          
+        "S3:S2_reflectance_an":
+          GSD: 480 # GSD 480 interp
+          patch_size: 16 # px
+          
+        "S3:S3_reflectance_an":
+          GSD: 480 # GSD 480 interp
+          patch_size: 16 # px
+          
+        "S3:S4_reflectance_an":
+          GSD: 480 # GSD 480 interp
+          patch_size: 16 # px
+          
+        "S3:S5_reflectance_an":
+          GSD: 480 # GSD 480 interp
+          patch_size: 16 # px
+          
+        "S3:S6_reflectance_an":
+          GSD: 480 # GSD 480 interp
+          patch_size: 16 # px
+          
+        
+        "S3:S7_BT_in":
+          GSD: 960 # GSD 960 interp
+          patch_size: 16 # px
+          
+        "S3:S8_BT_in":
+          GSD: 960 # GSD 960 interp
+          patch_size: 16 # px
+        
+        "S3:S9_BT_in":
+          GSD: 960 # GSD 960 interp
+          patch_size: 16 # px

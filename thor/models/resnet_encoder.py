@@ -9,7 +9,7 @@ from thor.core.model_registry import MODELS
 from thor.utils.constants import IN_RESENET_CHANNEL_MAP
 
 
-def update_first_layer(model, pretrained: bool = False, num_channels: int = 3, rgb_map: dict[str, int] = None):
+def update_first_layer(model, pretrained: bool = False, num_channels: int = 3, rgb_map: dict[str, int] | None = None):
     """
     Modify the first layer of the model to accomadate a different
     number of channels
@@ -36,7 +36,7 @@ def update_first_layer(model, pretrained: bool = False, num_channels: int = 3, r
 
 @MODELS.register()
 def resnet_50_encoder(
-    pretrained: bool = False, num_channels: int = 3, rgb_map: dict[str, int] = None, **kwargs
+    pretrained: bool = False, num_channels: int = 3, rgb_map: dict[str, int] | None = None, **kwargs
 ) -> ResNet:
     model_args = dict(block=Bottleneck, layers=[3, 4, 6, 3], **kwargs)
     model = build_model_with_cfg(ResNet, "resnet50", pretrained, **model_args)
@@ -47,7 +47,7 @@ def resnet_50_encoder(
 
 @MODELS.register()
 def resnet_18_encoder(
-    pretrained: bool = False, num_channels: int = 3, rgb_map: dict[str, int] = None, **kwargs
+    pretrained: bool = False, num_channels: int = 3, rgb_map: dict[str, int] | None = None, **kwargs
 ) -> ResNet:
     model_args = dict(block=BasicBlock, layers=[2, 2, 2, 2], **kwargs)
     model = build_model_with_cfg(ResNet, "resnet18", pretrained, **model_args)

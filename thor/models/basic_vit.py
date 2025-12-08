@@ -24,7 +24,7 @@ class BasicVitLargeMultispectral(timm.models.vision_transformer.VisionTransforme
     """Vision Transformer with support for global average pooling"""
 
     def __init__(self, global_pool=False, channel_groups=None, **kwargs):
-        super(BasicVitLargeMultispectral, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
         self.channel_groups = channel_groups
         self.patch_embed = nn.ModuleList(
@@ -64,7 +64,7 @@ class BasicVitLargeMultispectral(timm.models.vision_transformer.VisionTransforme
             x_c_embed.append(self.patch_embed[i](x[:, interval, :, :]))  # (N, L, D)
 
         x = torch.stack(x_c_embed, dim=1)  # (N, G, L, D)
-        _, G, L, D = x.shape
+        _, G, _L, D = x.shape
 
         pos_embed = self.pos_embed[:, 1:, :].unsqueeze(1)  # (1, 1, L, pD)
         pos_embed = pos_embed.expand(-1, G, -1, -1)  # (1, c, L, pD)
@@ -84,7 +84,7 @@ class BasicVitLargeMultispectral(timm.models.vision_transformer.VisionTransforme
 
     def forward(self, imgs):
         x_c = []
-        for i, group in enumerate(self.channel_groups):
+        for _i, group in enumerate(self.channel_groups):
             for band in group:
                 x_c.append(imgs[band])
         x = torch.cat(x_c, dim=1)
@@ -97,7 +97,7 @@ class BasicVitLargeRGB(timm.models.vision_transformer.VisionTransformer):
     """Vision Transformer with support for global average pooling"""
 
     def __init__(self, global_pool=False, channel_groups=None, **kwargs):
-        super(BasicVitLargeRGB, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
         self.channel_groups = channel_groups
 
@@ -131,7 +131,7 @@ class BasicVitLargeRGB(timm.models.vision_transformer.VisionTransformer):
 
     def forward(self, imgs):
         x_c = []
-        for i, group in enumerate(self.channel_groups):
+        for _i, group in enumerate(self.channel_groups):
             for band in group:
                 x_c.append(imgs[band])
         x = torch.cat(x_c, dim=1)

@@ -415,7 +415,7 @@ def example(rank, world_size):
     ns = (10,)  # 20,
     patch_size = (4,)  # 2,
     B = 8
-    N = sum(ns)
+    # N = sum(ns)
     D = 256
     num_samples = 2
     num_classes = 9
@@ -506,7 +506,7 @@ def example(rank, world_size):
         import matplotlib.pyplot as plt
 
         for group in masks:
-            fig, axs = plt.subplots(1, 2, dpi=400)
+            _fig, axs = plt.subplots(1, 2, dpi=400)
 
             target_mask = masks[group]["target"].cpu().numpy()
             axs[0].imshow(target_mask[:, :])
