@@ -782,6 +782,7 @@ class IndFlexiPatchEmbed(FlexiBase):
             patch_size_seqs = dict.fromkeys(channels, patch_size_seqs)
 
         # filter valid patch size seqs
+        missing_produc_bands = []
         for product_band in patch_size_seqs.keys():
             _patch_size_seq = []
 
@@ -800,11 +801,13 @@ class IndFlexiPatchEmbed(FlexiBase):
                     f"No valid patch sizes for {product_band} for ground cover {ground_covers} and GSD {product_gsd}"
                     f" with patch size seq {patch_size_seqs[product_band]}"
                 )
-                logger.info(msg)
+                logger.debug(msg)
+                missing_produc_bands.append(product_band)
                 continue
 
             logger.info(f"product_band: {product_band}, _patch_size_seq: {_patch_size_seq}\n")
             patch_size_seqs[product_band] = sorted(_patch_size_seq)
+        logger.info(f"Missing product bands due to no valid patch sizes: {missing_produc_bands}")
 
         self.patch_size_seqs = patch_size_seqs
 
