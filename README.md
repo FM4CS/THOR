@@ -110,3 +110,10 @@ If you use THOR in your research, please cite the [paper](https://arxiv.org/abs/
       url={https://arxiv.org/abs/2601.16011}, 
 }
 ```
+
+## License
+
+THOR is released under the MIT License.
+
+This project is based in part on code from the Stanford Machine Learning Group,
+also licensed under MIT.
