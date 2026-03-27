@@ -1,6 +1,7 @@
 import logging
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import partial
 from typing import Any, Literal
 
@@ -29,6 +30,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class CompactAlibiSpec:
+    q_x: torch.Tensor
+    k_x: torch.Tensor
+    q_y: torch.Tensor
+    k_y: torch.Tensor
+    slopes: torch.Tensor
+    num_prefix_tokens: int = 0
+
+
 def get_slopes(n):
     def get_slopes_power_of_2(n):
         start = 2 ** (-(2 ** -(math.log2(n) - 3)))
@@ -43,6 +54,55 @@ def get_slopes(n):
             get_slopes_power_of_2(closest_power_of_2)
             + get_slopes(2 * closest_power_of_2)[0::2][: n - closest_power_of_2]
         )
+
+
+@torch.jit.script
+def get_alibi_points_thor(
+    metadata: dict[str, dict[str, int]],
+    available_groups: dict[str, list[str]],
+    ground_cover: int | None = None,
+    device: torch.device | None = None,
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    """
+    Build normalized 2D coordinates for tokens in the same order used by encoder concatenation.
+    Args:
+        metadata: metadata of the input data
+        available_groups: available groups of the input data
+        ground_cover: ground cover of the input data, used to normalize the bias to the same scale, default is None
+        (useful for example if we want to use the same bias for different ground covers), default is to use the max patch size
+        device: device to use for computation
+    Returns:
+        points: tensor of shape (num_patches, 2), where num_patches = sum(num_patches of all groups)
+
+    """
+
+    all_points = []
+    max_patch_gsd_size = 0
+    for _group_name, group_members in available_groups.items():
+        first_member = group_members[0]
+        product_gsd = metadata[first_member]["GSD"]
+        product_num_patch = metadata[first_member]["num_patch"]
+        product_patch_size = metadata[first_member]["patch_size"]
+        max_patch_gsd_size = max(max_patch_gsd_size, product_patch_size * product_gsd)
+
+        line_of_points = torch.arange(0, product_num_patch, dtype=dtype, device=device)
+        line_of_points *= product_patch_size
+        line_of_points += product_patch_size / 2
+        line_of_points *= product_gsd
+
+        points = torch.cartesian_prod(line_of_points, line_of_points)
+        all_points.append(points)
+
+    points = torch.cat(all_points, dim=0)
+
+    # Either normalize by max patch gsd size or by ground cover
+    if ground_cover is not None:
+        points = points / ground_cover
+    else:
+        points = points / max_patch_gsd_size
+
+    return points
 
 
 @torch.jit.script
@@ -70,33 +130,14 @@ def get_alibi_thor(
 
     """
 
-    num_patches = 0
-    all_points = []
-    max_patch_gsd_size = 0
-    for _group_name, group_members in available_groups.items():
-        first_member = group_members[0]
-        product_gsd = metadata[first_member]["GSD"]
-        product_num_patch = metadata[first_member]["num_patch"]
-        product_patch_size = metadata[first_member]["patch_size"]
-        num_patches += int(product_num_patch**2)
-        max_patch_gsd_size = max(max_patch_gsd_size, product_patch_size * product_gsd)
-
-        line_of_points = torch.arange(0, product_num_patch, dtype=dtype, device=device)
-        line_of_points *= product_patch_size
-        line_of_points += product_patch_size / 2
-        line_of_points *= product_gsd
-
-        points = torch.cartesian_prod(line_of_points, line_of_points)
-        all_points.append(points)
-
-    points = torch.cat(all_points, dim=0)
-
-    # Either normalize by max patch gsd size or by ground cover
-    if ground_cover is not None:
-        points = points / ground_cover
-    else:
-        points = points / max_patch_gsd_size
-
+    points = get_alibi_points_thor(
+        metadata,
+        available_groups,
+        ground_cover=ground_cover,
+        device=device,
+        dtype=dtype,
+    )
+    num_patches = points.shape[0]
     attention_heads = slopes.shape[0]
     slopes = slopes.unsqueeze(1).unsqueeze(2)
     distances = torch.cdist(points, points)
@@ -105,6 +146,63 @@ def get_alibi_thor(
     distances = distances * slopes * -1
     distances = distances.view(-1, attention_heads, num_patches, num_patches)
     return distances
+
+
+def get_compact_alibi_thor(
+    metadata: dict[str, dict[str, int]],
+    available_groups: dict[str, list[str]],
+    slopes: torch.Tensor,
+    num_prefix_tokens: int = 0,
+    ground_cover: int | None = None,
+    device: torch.device | None = None,
+    dtype: torch.dtype = torch.float32,
+) -> CompactAlibiSpec:
+    points = get_alibi_points_thor(
+        metadata,
+        available_groups,
+        ground_cover=ground_cover,
+        device=device,
+        dtype=dtype,
+    )
+    return CompactAlibiSpec(
+        q_x=points[:, 0].clone(),
+        k_x=points[:, 0].clone(),
+        q_y=points[:, 1].clone(),
+        k_y=points[:, 1].clone(),
+        slopes=slopes.to(device=device),
+        num_prefix_tokens=int(num_prefix_tokens),
+    )
+
+
+def compact_alibi_to_dense(alibi: CompactAlibiSpec, batch_size: int | None = None) -> torch.Tensor:
+    q_x = alibi.q_x.unsqueeze(1)
+    k_x = alibi.k_x.unsqueeze(0)
+    q_y = alibi.q_y.unsqueeze(1)
+    k_y = alibi.k_y.unsqueeze(0)
+
+    dx = q_x - k_x
+    dy = q_y - k_y
+    distances = torch.sqrt(dx * dx + dy * dy)
+    dense_alibi = -alibi.slopes[:, None, None] * (distances + float(alibi.num_prefix_tokens))
+    dense_alibi = dense_alibi.unsqueeze(0)
+
+    if alibi.num_prefix_tokens:
+        dense_alibi = F.pad(
+            dense_alibi,
+            (
+                alibi.num_prefix_tokens,
+                0,
+                alibi.num_prefix_tokens,
+                0,
+            ),
+            mode="constant",
+            value=0.0,
+        )
+
+    if batch_size is not None:
+        dense_alibi = dense_alibi.expand(batch_size, -1, -1, -1)
+
+    return dense_alibi
 
 
 @torch.jit.script
@@ -715,6 +813,41 @@ class ThorViTEncoder(nn.Module):
 
         return group_embed
 
+    def _build_encoder_alibi(
+        self,
+        available_groups: dict[str, list[str]],
+        channel_params: dict[str, dict[str, int]],
+        batch_size: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor | CompactAlibiSpec | None:
+        if self.encoder_pos_type != "alibi":
+            return None
+
+        from thor.models.patch_timm import use_flex_attn
+
+        if not self.training and not torch.jit.is_scripting() and use_flex_attn():
+            return get_compact_alibi_thor(
+                channel_params,
+                available_groups,
+                slopes=self.encoder_slopes,
+                num_prefix_tokens=self.num_prefix_tokens,
+                device=device,
+                dtype=dtype,
+            )
+
+        alibi = get_alibi_thor(
+            channel_params,
+            available_groups,
+            slopes=self.encoder_slopes,
+            offset=self.num_prefix_tokens,
+            device=device,
+            dtype=dtype,
+        )
+        if self.cls_token_type == "token":
+            alibi = alibi_cls_token_pad(alibi)
+        return alibi.expand(batch_size, -1, -1, -1)
+
     def forward_encoder(
         self,
         x: dict[str, torch.Tensor],
@@ -765,20 +898,13 @@ class ThorViTEncoder(nn.Module):
             cls_tokens = self.cls_token.expand(x.shape[0], -1, -1)
             x = torch.cat((cls_tokens, x), dim=1)  # (N, T + 1, D)
 
-        if self.encoder_pos_type == "alibi":
-            alibi = get_alibi_thor(
-                channel_params,
-                available_groups,
-                slopes=self.encoder_slopes,
-                offset=self.num_prefix_tokens,
-                device=x.device,
-                dtype=x.dtype,
-            )
-            if self.cls_token_type == "token":
-                alibi = alibi_cls_token_pad(alibi)
-            alibi = alibi.expand(x.shape[0], -1, -1, -1)
-        else:
-            alibi = None
+        alibi = self._build_encoder_alibi(
+            available_groups,
+            channel_params,
+            batch_size=x.shape[0],
+            device=x.device,
+            dtype=x.dtype,
+        )
 
         # apply Transformer blocks
         for blk in self.blocks:
@@ -922,20 +1048,13 @@ class ThorViTEncoder(nn.Module):
             cls_tokens = self.cls_token.expand(x.shape[0], -1, -1)
             x = torch.cat((cls_tokens, x), dim=1)  # (N, T + 1, D)
 
-        if self.encoder_pos_type == "alibi":
-            alibi = get_alibi_thor(
-                channel_params,
-                available_groups,
-                slopes=self.encoder_slopes,
-                offset=self.num_prefix_tokens,
-                device=x.device,
-                dtype=x.dtype,
-            )
-            if self.cls_token_type == "token":
-                alibi = alibi_cls_token_pad(alibi)
-            alibi = alibi.expand(x.shape[0], -1, -1, -1)
-        else:
-            alibi = None
+        alibi = self._build_encoder_alibi(
+            available_groups,
+            channel_params,
+            batch_size=x.shape[0],
+            device=x.device,
+            dtype=x.dtype,
+        )
 
         if torch.jit.is_scripting() or not stop_early:  # can't slice blocks in torchscript
             blocks = self.blocks
