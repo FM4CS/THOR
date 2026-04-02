@@ -7,7 +7,7 @@ include = ["thor*"]
 
 [project]
 name = "thor"
-version = "1.0.2"
+version = "1.0.3"
 description = "THOR - Transformer based foundation model for Heterogeneous Observation and Resolution."
 license = { "text" = "MIT License" }
 readme = "README.md"
