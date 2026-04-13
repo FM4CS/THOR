@@ -94,6 +94,17 @@ def _is_compact_alibi(alibi: Any | None) -> bool:
     )
 
 
+def _compact_alibi_to_dense(alibi: Any, batch_size: int) -> torch.Tensor:
+    """Materialise a CompactAlibiSpec into a dense (B, H, N+P, N+P) bias tensor."""
+    dx = alibi.q_x.unsqueeze(1) - alibi.k_x.unsqueeze(0)
+    dy = alibi.q_y.unsqueeze(1) - alibi.k_y.unsqueeze(0)
+    distances = torch.sqrt(dx * dx + dy * dy)
+    dense = -alibi.slopes.unsqueeze(-1).unsqueeze(-1) * (distances.unsqueeze(0) + alibi.num_prefix_tokens)
+    p = alibi.num_prefix_tokens
+    dense = F.pad(dense, (p, 0, p, 0), value=0.0)
+    return dense.expand(batch_size, -1, -1, -1)
+
+
 def _is_head_dim_power_of_two(n: int) -> bool:
     return n > 0 and (n & (n - 1)) == 0
 
@@ -141,7 +152,8 @@ def _alibi_attn_flex_forward(self, x: torch.Tensor, alibi: Any | None = None) ->
     q, k, v = qkv.unbind(0)
     q, k = self.q_norm(q), self.k_norm(k)
 
-    if _is_compact_alibi(alibi):
+    dropout_p = self.attn_drop.p if self.training else 0.0
+    if _is_compact_alibi(alibi) and _supports_compiled_flex_attention_inputs(q, v):
         score_mod = _make_compact_alibi_score_mod(
             alibi.q_x,
             alibi.k_x,
@@ -150,15 +162,14 @@ def _alibi_attn_flex_forward(self, x: torch.Tensor, alibi: Any | None = None) ->
             alibi.slopes,
             alibi.num_prefix_tokens,
         )
-        x = get_flex_attention_impl(q, v)(q, k, v, score_mod=score_mod)
+        kernel_options = {"DROPOUT_P": dropout_p} if dropout_p > 0.0 else {}
+        x = get_flex_attention_impl(q, v)(q, k, v, score_mod=score_mod, kernel_options=kernel_options)
     else:
-        x = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=alibi,
-            dropout_p=self.attn_drop.p if self.training else 0.0,
-        )
+        # Dense tensor, None, or compact alibi on a device that doesn't support the compiled
+        # flex kernel (CPU / head_dim < 16). Materialise the bias if needed and use SDPA.
+        if _is_compact_alibi(alibi):
+            alibi = _compact_alibi_to_dense(alibi, batch_size=B)
+        x = F.scaled_dot_product_attention(q, k, v, attn_mask=alibi, dropout_p=dropout_p)
 
     x = x.transpose(1, 2).reshape(B, N, C)
     x = self.proj(x)

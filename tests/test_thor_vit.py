@@ -180,6 +180,47 @@ def test_init_cls_token():
     assert model.num_prefix_tokens == 1
 
 
+def test_init_accepts_global_int_patch_size_seq():
+    model = tiny_encoder(make_input_params(flexivit_patch_size_seqs=16))
+    assert model.ind_patch_embed.patch_size_seqs["S2:Red"] == [16]
+
+
+def test_init_accepts_per_band_patch_size_seq_dict():
+    channels = {
+        "S2:Red": {"GSD": 10, "patch_size": 16},
+        "S2:RE1": {"GSD": 20, "patch_size": 16},
+    }
+    patch_size_seqs = {
+        "S2:Red": 8,
+        "S2:RE1": [8, 16],
+    }
+    model = tiny_encoder(
+        make_input_params(
+            channels=channels,
+            groups=[["S2:Red"], ["S2:RE1"]],
+            flexivit_patch_size_seqs=patch_size_seqs,
+        )
+    )
+
+    assert model.ind_patch_embed.patch_size_seqs["S2:Red"] == [8]
+    assert model.ind_patch_embed.patch_size_seqs["S2:RE1"] == [8, 16]
+
+
+def test_init_rejects_per_band_patch_size_seq_dict_missing_channel():
+    channels = {
+        "S2:Red": {"GSD": 10, "patch_size": 16},
+        "S2:RE1": {"GSD": 20, "patch_size": 16},
+    }
+    with pytest.raises(ValueError, match="Missing flexivit_patch_size_seqs"):
+        tiny_encoder(
+            make_input_params(
+                channels=channels,
+                groups=[["S2:Red"], ["S2:RE1"]],
+                flexivit_patch_size_seqs={"S2:Red": [8, 16]},
+            )
+        )
+
+
 def test_init_two_groups():
     channels = {
         "S2:Red": {"GSD": 10, "patch_size": 16},
@@ -200,6 +241,27 @@ def test_init_validate_group_raises_on_gsd_mismatch():
     groups = [["S2:Red", "S2:RE1"]]
     with pytest.raises(ValueError, match="GSD"):
         tiny_encoder(make_input_params(channels=channels, groups=groups))
+
+
+def test_init_non_flexivit_uses_per_band_min_patch_size_seq_for_num_patch():
+    channels = {
+        "S2:Red": {"GSD": 10, "patch_size": 16},
+        "S2:RE1": {"GSD": 20, "patch_size": 16},
+    }
+    model = tiny_encoder(
+        make_input_params(
+            channels=channels,
+            groups=[["S2:Red"], ["S2:RE1"]],
+            use_flexivit=False,
+            flexivit_patch_size_seqs={
+                "S2:Red": [8, 16],
+                "S2:RE1": 16,
+            },
+        )
+    )
+
+    assert model.channels["S2:Red"]["num_patch"] == GROUND_COVER // 10 // 8
+    assert model.channels["S2:RE1"]["num_patch"] == GROUND_COVER // 20 // 16
 
 
 # ---------------------------------------------------------------------------

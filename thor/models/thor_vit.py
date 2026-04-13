@@ -40,6 +40,53 @@ class CompactAlibiSpec:
     num_prefix_tokens: int = 0
 
 
+def _normalize_flexivit_patch_size_seq_value(patch_sizes: int | Sequence[int]) -> list[int]:
+    if isinstance(patch_sizes, int):
+        values = [patch_sizes]
+    elif isinstance(patch_sizes, Sequence) and not isinstance(patch_sizes, str):
+        values = list(patch_sizes)
+    else:
+        msg = f"flexivit_patch_size_seqs entries must be an int or a sequence of ints, got {type(patch_sizes).__name__}"
+        raise TypeError(msg)
+
+    if not values:
+        msg = "flexivit_patch_size_seqs entries must not be empty."
+        raise ValueError(msg)
+
+    normalized = sorted({int(value) for value in values})
+    if any(value <= 0 for value in normalized):
+        msg = f"flexivit_patch_size_seqs entries must be positive integers, got {normalized}"
+        raise ValueError(msg)
+    return normalized
+
+
+def _normalize_flexivit_patch_size_seqs(
+    channels: dict[str, dict[str, Any]],
+    patch_size_seqs: dict[str, int | Sequence[int]] | int | Sequence[int] | None,
+    default_patch_size: int,
+) -> dict[str, list[int]]:
+    if patch_size_seqs is None:
+        shared_patch_sizes = [default_patch_size]
+        return {product_band: list(shared_patch_sizes) for product_band in channels}
+
+    if isinstance(patch_size_seqs, dict):
+        missing_product_bands = sorted(set(channels) - set(patch_size_seqs))
+        unknown_product_bands = sorted(set(patch_size_seqs) - set(channels))
+        if missing_product_bands:
+            msg = f"Missing flexivit_patch_size_seqs entries for channels: {missing_product_bands}"
+            raise ValueError(msg)
+        if unknown_product_bands:
+            msg = f"Unknown flexivit_patch_size_seqs channels: {unknown_product_bands}"
+            raise ValueError(msg)
+        return {
+            product_band: _normalize_flexivit_patch_size_seq_value(product_patch_sizes)
+            for product_band, product_patch_sizes in patch_size_seqs.items()
+        }
+
+    shared_patch_sizes = _normalize_flexivit_patch_size_seq_value(patch_size_seqs)
+    return {product_band: list(shared_patch_sizes) for product_band in channels}
+
+
 def get_slopes(n):
     def get_slopes_power_of_2(n):
         start = 2 ** (-(2 ** -(math.log2(n) - 3)))
@@ -285,11 +332,8 @@ class ThorViTEncoder(nn.Module):
         ], f"cls_token_type {self.cls_token_type} is not supported, only `pooled` and `token` are supported."
 
         self.use_superposition_encoding = input_params.pop("use_superposition_encoding", False)
-        patch_size_seqs = input_params.pop("flexivit_patch_size_seqs", None)
+        raw_patch_size_seqs = input_params.pop("flexivit_patch_size_seqs", None)
         self.flexivit_ref_patch_size = input_params.pop("flexivit_ref_patch_size", 4)
-        if patch_size_seqs is None:
-            patch_size_seqs = [self.flexivit_ref_patch_size]
-        self.patch_size_seqs = sorted(patch_size_seqs)
         self.flexivit_ref_grid_size = input_params.pop("flexivit_ref_grid_size", 14)
         self.use_flexivit = input_params.pop("use_flexivit", True)
         self.token_budget = input_params.pop("flexivit_token_budget", 1296)
@@ -303,6 +347,11 @@ class ThorViTEncoder(nn.Module):
             "interpolate",
         ], f"encoder_pos_type {self.encoder_pos_type} is not supported."
         channels = input_params.pop("channels")
+        patch_size_seqs = _normalize_flexivit_patch_size_seqs(
+            channels,
+            raw_patch_size_seqs,
+            self.flexivit_ref_patch_size,
+        )
         # Backwards compat channels
         self.channels = {}
         self.channel_rename_map = {}
@@ -316,7 +365,7 @@ class ThorViTEncoder(nn.Module):
                 if len(self.ground_covers) > 1:
                     msg = "patch_size is ambiguous supported for multiple ground covers."
                     raise ValueError(msg)
-                min_patch_size_seq = min(patch_size_seqs)
+                min_patch_size_seq = min(patch_size_seqs[channel])
                 patch_size = min(params["patch_size"], min_patch_size_seq)
 
                 params["num_patch"] = self.ground_covers[0] // patch_size // params["GSD"]

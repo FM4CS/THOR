@@ -375,7 +375,7 @@ def test_flex_forward_uses_compact_score_mod(monkeypatch: pytest.MonkeyPatch) ->
     )
     captured: dict[str, object] = {}
 
-    def fake_flex(q, k, v, score_mod=None):
+    def fake_flex(q, k, v, score_mod=None, **kwargs):
         captured["score_mod"] = score_mod
         return torch.zeros_like(q)
 
@@ -385,6 +385,7 @@ def test_flex_forward_uses_compact_score_mod(monkeypatch: pytest.MonkeyPatch) ->
         lambda *args, **kwargs: pytest.fail("compact ALiBi should use flex_attention"),
     )
     monkeypatch.setattr(patch_timm, "get_flex_attention_impl", lambda *args, **kwargs: fake_flex)
+    monkeypatch.setattr(patch_timm, "_supports_compiled_flex_attention_inputs", lambda q, v: True)
 
     out = patch_timm._alibi_attn_flex_forward(attn, x, compact)
 
