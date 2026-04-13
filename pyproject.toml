@@ -7,7 +7,7 @@ include = ["thor*"]
 
 [project]
 name = "thor"
-version = "1.0.2"
+version = "1.0.3"
 description = "THOR - Transformer based foundation model for Heterogeneous Observation and Resolution."
 license = { "text" = "MIT License" }
 readme = "README.md"
@@ -43,6 +43,7 @@ dependencies = [
     "pandas>=1.5.3",
     "numpy>=1.26.4",
     "matplotlib>=3.8.3",
+    "einops>=0.8.2",
 ]
 
 [project.urls]
@@ -57,7 +58,12 @@ scripts = ["huggingface-hub>=0.25.0", "wandb>=0.16.4", "fire>=0.6.0"]
 all = ["thor[scripts]"]
 
 [dependency-groups]
-dev = ["ipykernel>=6.29.5", "ipython>=8.27.0", "ruff>=0.8.1"]
+dev = [
+    "ipykernel>=6.29.5",
+    "ipython>=8.27.0",
+    "pytest>=9.0.2",
+    "ruff>=0.8.1",
+]
 
 
 [[tool.mypy.overrides]]
