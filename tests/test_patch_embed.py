@@ -17,7 +17,6 @@ from thor.utils.patch_embed import (
     resize_abs_pos_embed,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers shared across tests
 # ---------------------------------------------------------------------------
@@ -321,9 +320,9 @@ def test_ind_flexi_patch_embed_forward_multi_channel():
         "S2:RE1": torch.randn(2, 1, 48, 48),
     }
     out = embed(x)
-    assert out["S2:Red"].shape == (2, 36, EMBED_DIM)   # 6*6
+    assert out["S2:Red"].shape == (2, 36, EMBED_DIM)  # 6*6
     assert out["S2:Green"].shape == (2, 36, EMBED_DIM)
-    assert out["S2:RE1"].shape == (2, 9, EMBED_DIM)    # 3*3
+    assert out["S2:RE1"].shape == (2, 9, EMBED_DIM)  # 3*3
 
 
 def test_ind_flexi_patch_embed_skips_bands_not_in_patch_sizes():

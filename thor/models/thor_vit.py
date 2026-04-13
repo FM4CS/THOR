@@ -164,11 +164,13 @@ def get_compact_alibi_thor(
         device=device,
         dtype=dtype,
     )
+    x_coords = points[:, 0]
+    y_coords = points[:, 1]
     return CompactAlibiSpec(
-        q_x=points[:, 0].clone(),
-        k_x=points[:, 0].clone(),
-        q_y=points[:, 1].clone(),
-        k_y=points[:, 1].clone(),
+        q_x=x_coords,
+        k_x=x_coords,
+        q_y=y_coords,
+        k_y=y_coords,
         slopes=slopes.to(device=device),
         num_prefix_tokens=int(num_prefix_tokens),
     )

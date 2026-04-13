@@ -27,7 +27,7 @@ if use_flex_attn():
     from torch.nn.attention.flex_attention import flex_attention
 
 
-_FLEX_ATTENTION_IMPL_CACHE: dict[str, Any] = {}
+_COMPILED_FLEX_ATTENTION: Any | None = None
 
 
 def _get_flex_attention_compile_kwargs() -> dict[str, Any]:
@@ -37,37 +37,47 @@ def _get_flex_attention_compile_kwargs() -> dict[str, Any]:
     return compile_kwargs
 
 
-def _flex_attention_plain(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-    return flex_attention(q, k, v)
+def _supports_compiled_flex_attention_inputs(q: torch.Tensor, v: torch.Tensor) -> bool:
+    if q.device.type != "cuda":
+        return False
+    return q.shape[-1] >= 16 and v.shape[-1] >= 16
 
 
-def _flex_attention_dense(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, alibi: torch.Tensor) -> torch.Tensor:
-    def apply_alibi(score, b, h, q_idx, kv_idx):
-        return score + alibi[b, h, q_idx, kv_idx]
-
-    return flex_attention(
-        q,
-        k,
-        v,
-        score_mod=apply_alibi,
-    )
+def clear_flex_attention_impl_cache() -> None:
+    global _COMPILED_FLEX_ATTENTION
+    _COMPILED_FLEX_ATTENTION = None
 
 
-def _flex_attention_compact(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
+def get_flex_attention_impl(q: torch.Tensor | None = None, v: torch.Tensor | None = None):
+    if not use_flex_attn():
+        msg = "Flex attention is not enabled."
+        raise RuntimeError(msg)
+
+    if not COMPILE_FLEX_ATTENTION:
+        return flex_attention
+
+    if q is not None and v is not None and not _supports_compiled_flex_attention_inputs(q, v):
+        return flex_attention
+
+    global _COMPILED_FLEX_ATTENTION
+    if _COMPILED_FLEX_ATTENTION is None:
+        logger.info("Compiling flex_attention for fused attention kernels")
+        _COMPILED_FLEX_ATTENTION = torch.compile(flex_attention, **_get_flex_attention_compile_kwargs())
+    return _COMPILED_FLEX_ATTENTION
+
+
+def _make_compact_alibi_score_mod(
     q_x: torch.Tensor,
     k_x: torch.Tensor,
     q_y: torch.Tensor,
     k_y: torch.Tensor,
     slopes: torch.Tensor,
     num_prefix_tokens: int,
-) -> torch.Tensor:
+):
     def apply_alibi(score, b, h, q_idx, kv_idx):
         prefix_mask = (q_idx < num_prefix_tokens) | (kv_idx < num_prefix_tokens)
-        q_patch_idx = q_idx - num_prefix_tokens
-        kv_patch_idx = kv_idx - num_prefix_tokens
+        q_patch_idx = torch.clamp(q_idx - num_prefix_tokens, min=0)
+        kv_patch_idx = torch.clamp(kv_idx - num_prefix_tokens, min=0)
 
         dx = q_x[q_patch_idx] - k_x[kv_patch_idx]
         dy = q_y[q_patch_idx] - k_y[kv_patch_idx]
@@ -75,48 +85,17 @@ def _flex_attention_compact(
         bias = -slopes[h] * (distance + num_prefix_tokens)
         return torch.where(prefix_mask, score, score + bias)
 
-    return flex_attention(
-        q,
-        k,
-        v,
-        score_mod=apply_alibi,
-    )
-
-
-def clear_flex_attention_impl_cache() -> None:
-    _FLEX_ATTENTION_IMPL_CACHE.clear()
-
-
-def get_flex_attention_impl(kind: str = "plain"):
-    if not use_flex_attn():
-        msg = "Flex attention is not enabled."
-        raise RuntimeError(msg)
-
-    impl_lookup = {
-        "plain": _flex_attention_plain,
-        "dense": _flex_attention_dense,
-        "compact": _flex_attention_compact,
-    }
-    if kind not in impl_lookup:
-        msg = f"Unknown flex attention implementation kind: {kind}"
-        raise ValueError(msg)
-
-    impl = impl_lookup[kind]
-    if not COMPILE_FLEX_ATTENTION:
-        return impl
-
-    cached_impl = _FLEX_ATTENTION_IMPL_CACHE.get(kind)
-    if cached_impl is None:
-        logger.info("Compiling flex_attention for fused attention kernels (%s)", kind)
-        cached_impl = torch.compile(impl, **_get_flex_attention_compile_kwargs())
-        _FLEX_ATTENTION_IMPL_CACHE[kind] = cached_impl
-    return cached_impl
+    return apply_alibi
 
 
 def _is_compact_alibi(alibi: Any | None) -> bool:
     return alibi is not None and all(
         hasattr(alibi, attr) for attr in ("q_x", "k_x", "q_y", "k_y", "slopes", "num_prefix_tokens")
     )
+
+
+def _is_head_dim_power_of_two(n: int) -> bool:
+    return n > 0 and (n & (n - 1)) == 0
 
 
 def _alibi_attn_forward(self, x: torch.Tensor, alibi: Any | None = None) -> torch.Tensor:
@@ -153,13 +132,8 @@ def _alibi_attn_forward(self, x: torch.Tensor, alibi: Any | None = None) -> torc
 
 
 def _alibi_attn_flex_forward(self, x: torch.Tensor, alibi: Any | None = None) -> torch.Tensor:
-    def is_power_of_two(n):
-        if n <= 0:
-            return False
-        return (n & (n - 1)) == 0
-
-    if not is_power_of_two(self.head_dim):
-        msg = f"head_dim {self.head_dim} is not a power of 2, please use a power of 2 for the head_dim for flexi attention to work"
+    if not _is_head_dim_power_of_two(self.head_dim):
+        msg = f"head_dim {self.head_dim} is not a power of 2, required for flex attention"
         raise ValueError(msg)
 
     B, N, C = x.shape
@@ -168,10 +142,7 @@ def _alibi_attn_flex_forward(self, x: torch.Tensor, alibi: Any | None = None) ->
     q, k = self.q_norm(q), self.k_norm(k)
 
     if _is_compact_alibi(alibi):
-        x = get_flex_attention_impl("compact")(
-            q,
-            k,
-            v,
+        score_mod = _make_compact_alibi_score_mod(
             alibi.q_x,
             alibi.k_x,
             alibi.q_y,
@@ -179,10 +150,15 @@ def _alibi_attn_flex_forward(self, x: torch.Tensor, alibi: Any | None = None) ->
             alibi.slopes,
             alibi.num_prefix_tokens,
         )
-    elif alibi is None:
-        x = get_flex_attention_impl("plain")(q, k, v)
+        x = get_flex_attention_impl(q, v)(q, k, v, score_mod=score_mod)
     else:
-        x = get_flex_attention_impl("dense")(q, k, v, alibi)
+        x = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=alibi,
+            dropout_p=self.attn_drop.p if self.training else 0.0,
+        )
 
     x = x.transpose(1, 2).reshape(B, N, C)
     x = self.proj(x)

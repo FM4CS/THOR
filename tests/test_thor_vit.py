@@ -4,7 +4,7 @@ from functools import partial
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from thor.models.thor_vit import (
     ThorViTEncoder,
@@ -243,9 +243,7 @@ def test_aggregate_by_group_mean():
         "S2:Red": {"GSD": 10, "patch_size": 16},
         "S2:Green": {"GSD": 10, "patch_size": 16},
     }
-    model = tiny_encoder(
-        make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="mean")
-    )
+    model = tiny_encoder(make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="mean"))
     B, N, D = 2, NUM_PATCHES_10M, 64
     patch_embed = {
         "S2:Red": torch.ones(B, N, D),
@@ -261,9 +259,7 @@ def test_aggregate_by_group_subsetmean_missing_band():
         "S2:Red": {"GSD": 10, "patch_size": 16},
         "S2:Green": {"GSD": 10, "patch_size": 16},
     }
-    model = tiny_encoder(
-        make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="subsetmean")
-    )
+    model = tiny_encoder(make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="subsetmean"))
     B, N, D = 2, NUM_PATCHES_10M, 64
     patch_embed = {"S2:Red": torch.ones(B, N, D) * 7.0}  # S2:Green absent
     result = model.aggregate_by_group(patch_embed, {"group0": ["S2:Red", "S2:Green"]})
@@ -275,9 +271,7 @@ def test_aggregate_by_group_sum():
         "S2:Red": {"GSD": 10, "patch_size": 16},
         "S2:Green": {"GSD": 10, "patch_size": 16},
     }
-    model = tiny_encoder(
-        make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="sum")
-    )
+    model = tiny_encoder(make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="sum"))
     B, N, D = 1, NUM_PATCHES_10M, 64
     patch_embed = {
         "S2:Red": torch.ones(B, N, D) * 2.0,

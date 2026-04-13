@@ -1,7 +1,7 @@
 # Partially adpot from timm library https://github.com/rwightman/pytorch-image-models
 
 import torch
-from timm.models.helpers import build_model_with_cfg
+from timm.models import build_model_with_cfg
 from timm.models.resnet import BasicBlock, Bottleneck, ResNet
 from torch import nn
 
