@@ -18,19 +18,24 @@ from thor.models.thor_vit import (
     get_compact_alibi_thor,
 )
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+GROUND_COVER = 32
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 
 def make_input_params(cls_token_type: str = "pooled") -> dict:
     return {
-        "ground_covers": [32],
+        "ground_covers": [GROUND_COVER],
         "channels": {
-            "A:Band": {
-                "GSD": 1,
-                "patch_size": 8,
-            },
-            "B:Band": {
-                "GSD": 2,
-                "patch_size": 4,
-            },
+            "A:Band": {"GSD": 1, "patch_size": 8},
+            "B:Band": {"GSD": 2, "patch_size": 4},
         },
         "groups": [["A:Band"], ["B:Band"]],
         "encoder_pos_type": "alibi",
@@ -47,7 +52,7 @@ def make_model(
     num_heads: int = 4,
 ) -> ThorViTEncoder:
     torch.manual_seed(0)
-    model = ThorViTEncoder(
+    return ThorViTEncoder(
         deepcopy(make_input_params(cls_token_type=cls_token_type)),
         embed_dim=embed_dim,
         depth=2,
@@ -56,8 +61,7 @@ def make_model(
         prod_embed_dim=0,
         embed_band=False,
         band_embed_dim=0,
-    )
-    return model.to(device=device, dtype=torch.float32)
+    ).to(device=device, dtype=torch.float32)
 
 
 def make_inputs(batch_size: int = 2, device: str | torch.device = "cpu") -> dict[str, torch.Tensor]:
@@ -71,7 +75,7 @@ def make_inputs(batch_size: int = 2, device: str | torch.device = "cpu") -> dict
 def prepare_encoder_alibi_inputs(
     model: ThorViTEncoder,
     x: dict[str, torch.Tensor],
-    ground_cover: int = 32,
+    ground_cover: int = GROUND_COVER,
 ) -> tuple[dict[str, list[str]], dict[str, dict[str, int]]]:
     patch_sizes = model.get_patch_sizes(
         method=model.select_patch_strategy,
@@ -80,7 +84,7 @@ def prepare_encoder_alibi_inputs(
         ground_cover=ground_cover,
     )
     patch_embed = model.ind_patch_embed(x=x, patch_sizes=patch_sizes, device=model.device)
-    available_groups = model.get_available_groups(patch_embed)
+    available_groups = model.get_available_groups(x)
     channel_params = model.get_channel_params(patch_embed, metadata=None, ground_cover=ground_cover)
     return available_groups, channel_params
 
@@ -118,6 +122,11 @@ def patch_attention_mode(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     monkeypatch.setattr(TimmAttention, "forward", patch_timm._alibi_attn_flex_forward)
     monkeypatch.setattr(patch_timm, "use_flex_attn", lambda: True)
     monkeypatch.setattr(patch_timm, "flex_attention", flex_attention, raising=False)
+
+
+# ---------------------------------------------------------------------------
+# get_flex_attention_impl
+# ---------------------------------------------------------------------------
 
 
 def test_get_flex_attention_impl_compiles_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -171,6 +180,11 @@ def test_get_flex_attention_impl_keeps_small_cuda_heads_uncompiled(monkeypatch: 
     patch_timm.clear_flex_attention_impl_cache()
 
 
+# ---------------------------------------------------------------------------
+# score_mod helpers
+# ---------------------------------------------------------------------------
+
+
 def test_make_compact_alibi_score_mod_clamps_prefix_indices() -> None:
     class IndexCheckingTensor:
         def __init__(self, values: torch.Tensor) -> None:
@@ -195,27 +209,61 @@ def test_make_compact_alibi_score_mod_clamps_prefix_indices() -> None:
     assert torch.equal(out, score)
 
 
-def test_compact_alibi_matches_dense_reconstruction() -> None:
-    metadata = {
-        "group_a": {"GSD": 1, "num_patch": 4, "patch_size": 8},
-        "group_b": {"GSD": 2, "num_patch": 4, "patch_size": 4},
-    }
-    available_groups = {"group0": ["group_a"], "group1": ["group_b"]}
-    slopes = torch.tensor([1.0, 0.5, 0.25, 0.125])
+# ---------------------------------------------------------------------------
+# compact ↔ dense reconstruction
+# ---------------------------------------------------------------------------
 
-    dense = get_alibi_thor(metadata, available_groups, slopes=slopes, offset=1, dtype=torch.float32)
+# Shared metadata for reconstruction tests
+_RECON_METADATA = {
+    "group_a": {"GSD": 1, "num_patch": 4, "patch_size": 8},
+    "group_b": {"GSD": 2, "num_patch": 4, "patch_size": 4},
+}
+_RECON_GROUPS = {"group0": ["group_a"], "group1": ["group_b"]}
+_RECON_SLOPES = torch.tensor([1.0, 0.5, 0.25, 0.125])
+
+
+def test_compact_alibi_matches_dense_reconstruction() -> None:
+    dense = get_alibi_thor(_RECON_METADATA, _RECON_GROUPS, slopes=_RECON_SLOPES, offset=1, dtype=torch.float32)
     dense = alibi_cls_token_pad(dense)
 
     compact = get_compact_alibi_thor(
-        metadata,
-        available_groups,
-        slopes=slopes,
+        _RECON_METADATA,
+        _RECON_GROUPS,
+        slopes=_RECON_SLOPES,
         num_prefix_tokens=1,
         dtype=torch.float32,
     )
-    rebuilt = compact_alibi_to_dense(compact)
+    assert torch.allclose(compact_alibi_to_dense(compact), dense)
 
-    assert torch.allclose(rebuilt, dense)
+
+def test_compact_alibi_reuses_coordinate_storage() -> None:
+    compact = get_compact_alibi_thor(
+        {"group_a": {"GSD": 1, "num_patch": 4, "patch_size": 8}},
+        {"group0": ["group_a"]},
+        slopes=torch.tensor([1.0, 0.5]),
+        num_prefix_tokens=1,
+        dtype=torch.float32,
+    )
+    assert compact.q_x.data_ptr() == compact.k_x.data_ptr()
+    assert compact.q_y.data_ptr() == compact.k_y.data_ptr()
+
+
+def test_large_compact_alibi_smoke_does_not_materialize_dense_tensor() -> None:
+    compact = get_compact_alibi_thor(
+        {"group_a": {"GSD": 1, "num_patch": 128, "patch_size": 4}},
+        {"group0": ["group_a"]},
+        slopes=torch.tensor([1.0, 0.5, 0.25, 0.125]),
+        num_prefix_tokens=1,
+        dtype=torch.float32,
+    )
+    assert isinstance(compact, CompactAlibiSpec)
+    assert compact.q_x.numel() == 128 * 128
+    assert compact.slopes.shape == torch.Size([4])
+
+
+# ---------------------------------------------------------------------------
+# _build_encoder_alibi
+# ---------------------------------------------------------------------------
 
 
 def test_eval_flex_prepares_compact_alibi(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -241,23 +289,6 @@ def test_eval_flex_prepares_compact_alibi(monkeypatch: pytest.MonkeyPatch) -> No
     assert alibi.num_prefix_tokens == 1
 
 
-def test_compact_alibi_reuses_coordinate_storage() -> None:
-    metadata = {
-        "group_a": {"GSD": 1, "num_patch": 4, "patch_size": 8},
-    }
-    available_groups = {"group0": ["group_a"]}
-    compact = get_compact_alibi_thor(
-        metadata,
-        available_groups,
-        slopes=torch.tensor([1.0, 0.5]),
-        num_prefix_tokens=1,
-        dtype=torch.float32,
-    )
-
-    assert compact.q_x.data_ptr() == compact.k_x.data_ptr()
-    assert compact.q_y.data_ptr() == compact.k_y.data_ptr()
-
-
 def test_training_keeps_dense_alibi_with_flex_available(monkeypatch: pytest.MonkeyPatch) -> None:
     model = make_model(cls_token_type="token")
     model.train()
@@ -278,6 +309,11 @@ def test_training_keeps_dense_alibi_with_flex_available(monkeypatch: pytest.Monk
     assert alibi.shape == (2, model.num_heads, expected_num_tokens, expected_num_tokens)
 
 
+# ---------------------------------------------------------------------------
+# _alibi_attn_flex_forward routing
+# ---------------------------------------------------------------------------
+
+
 def test_flex_forward_uses_sdpa_for_dense_alibi(monkeypatch: pytest.MonkeyPatch) -> None:
     model = make_model(cls_token_type="token")
     attn = model.blocks[0].attn
@@ -286,7 +322,7 @@ def test_flex_forward_uses_sdpa_for_dense_alibi(monkeypatch: pytest.MonkeyPatch)
     calls: list[dict[str, object]] = []
 
     def fake_sdpa(q, k, v, attn_mask=None, dropout_p=0.0):
-        calls.append({"attn_mask": attn_mask, "dropout_p": dropout_p, "shape": tuple(q.shape)})
+        calls.append({"attn_mask": attn_mask})
         return torch.zeros_like(q)
 
     monkeypatch.setattr(patch_timm.F, "scaled_dot_product_attention", fake_sdpa)
@@ -309,7 +345,7 @@ def test_flex_forward_uses_sdpa_when_alibi_is_none(monkeypatch: pytest.MonkeyPat
     calls: list[dict[str, object]] = []
 
     def fake_sdpa(q, k, v, attn_mask=None, dropout_p=0.0):
-        calls.append({"attn_mask": attn_mask, "dropout_p": dropout_p, "shape": tuple(q.shape)})
+        calls.append({"attn_mask": attn_mask})
         return torch.zeros_like(q)
 
     monkeypatch.setattr(patch_timm.F, "scaled_dot_product_attention", fake_sdpa)
@@ -356,6 +392,11 @@ def test_flex_forward_uses_compact_score_mod(monkeypatch: pytest.MonkeyPatch) ->
     assert callable(captured["score_mod"])
 
 
+# ---------------------------------------------------------------------------
+# Dense ↔ compact parity (requires flex_attention to be runnable)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.parametrize("cls_token_type", ["pooled", "token"])
 def test_eval_outputs_match_between_dense_and_compact_alibi(
     monkeypatch: pytest.MonkeyPatch,
@@ -371,11 +412,11 @@ def test_eval_outputs_match_between_dense_and_compact_alibi(
 
     patch_attention_mode(monkeypatch, mode="dense")
     with torch.no_grad():
-        dense_output = model(x, ground_cover=32)
+        dense_output = model(x, ground_cover=GROUND_COVER)
 
     patch_attention_mode(monkeypatch, mode="flex")
     with torch.no_grad():
-        compact_output = model(x, ground_cover=32)
+        compact_output = model(x, ground_cover=GROUND_COVER)
 
     assert torch.allclose(compact_output, dense_output, atol=1e-4, rtol=1e-4)
 
@@ -401,31 +442,11 @@ def test_eval_outputs_match_between_dense_and_compact_alibi_compiled_cuda(
 
     patch_attention_mode(monkeypatch, mode="dense")
     with torch.no_grad():
-        dense_output = model(x, ground_cover=32)
+        dense_output = model(x, ground_cover=GROUND_COVER)
 
     patch_attention_mode(monkeypatch, mode="flex")
     with torch.no_grad():
-        compact_output = model(x, ground_cover=32)
+        compact_output = model(x, ground_cover=GROUND_COVER)
 
     assert patch_timm._COMPILED_FLEX_ATTENTION is not None
     assert torch.allclose(compact_output, dense_output, atol=1e-4, rtol=1e-4)
-
-
-def test_large_compact_alibi_smoke_does_not_materialize_dense_tensor() -> None:
-    metadata = {
-        "group_a": {"GSD": 1, "num_patch": 128, "patch_size": 4},
-    }
-    available_groups = {"group0": ["group_a"]}
-    slopes = torch.tensor([1.0, 0.5, 0.25, 0.125])
-
-    compact = get_compact_alibi_thor(
-        metadata,
-        available_groups,
-        slopes=slopes,
-        num_prefix_tokens=1,
-        dtype=torch.float32,
-    )
-
-    assert isinstance(compact, CompactAlibiSpec)
-    assert compact.q_x.numel() == 128 * 128
-    assert compact.slopes.shape == slopes.shape

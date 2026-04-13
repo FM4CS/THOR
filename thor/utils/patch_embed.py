@@ -597,12 +597,13 @@ class FlexiPatchEmbed(nn.Module):
         if new_patch_size not in self.pinvs:
             self.pinvs[new_patch_size] = self._calculate_pinv(self.patch_size, new_patch_size)
         pinv = self.pinvs[new_patch_size]
-        pinv = pinv.to(patch_embed.device)
+        pinv = pinv.to(device=patch_embed.device)
 
         def resample_patch_embed(patch_embed: Tensor):
             h, w = new_patch_size
-            resampled_kernel = pinv @ patch_embed.reshape(-1)
-            return rearrange(resampled_kernel, "(h w) -> h w", h=h, w=w)
+            patch_embed_dtype = patch_embed.dtype
+            resampled_kernel = pinv @ patch_embed.to(pinv.dtype).reshape(-1)
+            return rearrange(resampled_kernel, "(h w) -> h w", h=h, w=w).to(patch_embed_dtype)
 
         v_resample_patch_embed = vmap(vmap(resample_patch_embed, 0, 0), 1, 1)
 
@@ -688,12 +689,13 @@ class FlexiBase(nn.Module):
                 self.pinvs[patch_size] = {}
             self.pinvs[patch_size][new_patch_size] = self._calculate_pinv(patch_size, new_patch_size)
         pinv = self.pinvs[patch_size][new_patch_size]
-        pinv = pinv.to(patch_embed.device)
+        pinv = pinv.to(device=patch_embed.device)
 
         def resample_patch_embed(patch_embed: Tensor):
             h, w = new_patch_size
-            resampled_kernel = pinv @ patch_embed.reshape(-1)
-            return rearrange(resampled_kernel, "(h w) -> h w", h=h, w=w)
+            patch_embed_dtype = patch_embed.dtype
+            resampled_kernel = pinv @ patch_embed.to(pinv.dtype).reshape(-1)
+            return rearrange(resampled_kernel, "(h w) -> h w", h=h, w=w).to(patch_embed_dtype)
 
         v_resample_patch_embed = vmap(vmap(resample_patch_embed, 0, 0), 1, 1)
 
@@ -771,7 +773,7 @@ class IndFlexiPatchEmbed(FlexiBase):
             if channel_rename_map and product_band in channel_rename_map:
                 product_band = channel_rename_map[product_band]
             if product_band in proj_dict:
-                logger.info(f"Product band {product_band} already added, skipping")
+                logger.debug(f"Product band {product_band} already added, skipping")
                 continue
             proj_dict[product_band] = nn.Conv2d(1, embed_dim, kernel_size=kernel_size, stride=kernel_size, bias=bias)
         self.patch_embed = nn.ModuleDict(proj_dict)
@@ -805,10 +807,15 @@ class IndFlexiPatchEmbed(FlexiBase):
                 missing_product_bands.append(product_band)
                 continue
 
-            logger.info(f"product_band: {product_band}, _patch_size_seq: {_patch_size_seq}\n")
             patch_size_seqs[product_band] = sorted(_patch_size_seq)
         if missing_product_bands:
             logger.info(f"Missing product bands due to no valid patch sizes: {missing_product_bands}")
+
+        # Log patch size sequences per group (all bands in a group share the same sequence)
+        for group_name, group_members in groups.items():
+            first_band = group_members[0]
+            if first_band in patch_size_seqs:
+                logger.info(f"{group_name} ({len(group_members)} bands): patch_sizes={patch_size_seqs[first_band]}")
 
         self.patch_size_seqs = patch_size_seqs
 

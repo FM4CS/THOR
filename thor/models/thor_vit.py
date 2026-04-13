@@ -56,7 +56,7 @@ def get_slopes(n):
         )
 
 
-@torch.compile(fullgraph=True)
+@torch.compile
 def get_alibi_points_thor(
     metadata: dict[str, dict[str, int]],
     available_groups: dict[str, list[str]],
@@ -105,7 +105,7 @@ def get_alibi_points_thor(
     return points
 
 
-@torch.compile(fullgraph=True)
+@torch.compile
 def get_alibi_thor(
     metadata: dict[str, dict[str, int]],
     available_groups: dict[str, list[str]],
@@ -207,7 +207,7 @@ def compact_alibi_to_dense(alibi: CompactAlibiSpec, batch_size: int | None = Non
     return dense_alibi
 
 
-@torch.compile(fullgraph=True)
+@torch.compile
 def alibi_cls_token_pad(alibi: torch.Tensor) -> torch.Tensor:
     """
     Pad the alibi tensor to include a cls token (distance 0).
@@ -473,7 +473,15 @@ class ThorViTEncoder(nn.Module):
                 valid_groups[f"group{group_idx}"].append(product_band)
                 found_bands.append(product_band)
 
-        logger.info(f"Found bands: {found_bands}")
+        # Log compact group summary
+        for gname, gmembers in valid_groups.items():
+            bands_str = ", ".join(m.split(":")[1] for m in gmembers)
+            product = gmembers[0].split(":")[0]
+            gsd = self.channels[gmembers[0]]["GSD"]
+            ps = self.channels[gmembers[0]]["patch_size"]
+            logger.info(f"  {gname}: {product} [{bands_str}] (GSD={gsd}, patch_size={ps})")
+        logger.info(f"Total: {len(found_bands)} bands in {len(valid_groups)} groups")
+
         # Remove bands from channels that are not present in the groups
         keys = list(self.channels.keys())
         remove_bands = set(keys) - set(found_bands)
