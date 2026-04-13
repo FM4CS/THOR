@@ -20,8 +20,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@torch.jit.script
-def random_partition_sizes_jit(
+@torch.compile
+def random_partition_sizes_compiled(
     total_length: int, min_sizes: torch.Tensor, max_sizes: torch.Tensor, device: torch.device | None = None
 ) -> torch.Tensor:
     """
@@ -38,7 +38,7 @@ def random_partition_sizes_jit(
     n_parts = min_sizes.size(0)
     assert max_sizes.size(0) == n_parts, "min_sizes and max_sizes must have the same length"
 
-    min_sum = torch.sum(min_sizes).item()
+    min_sum = torch.sum(min_sizes)
 
     # Validate if constraints can be satisfied
     if min_sum > total_length:
@@ -51,13 +51,13 @@ def random_partition_sizes_jit(
     remaining_length = total_length
     for i in range(n_parts):
         is_last_part = i == n_parts - 1
-        min_size = min_sizes[i].item()
-        max_size = max_sizes[i].item()
+        min_size = min_sizes[i]
+        max_size = max_sizes[i]
 
         # Calculate remaining minimum space needed for future partitions
         remaining_min_space = 0
         if not is_last_part:
-            remaining_min_space = torch.sum(min_sizes[i + 1 :]).item()
+            remaining_min_space = torch.sum(min_sizes[i + 1 :])
 
         # Calculate valid range for this partition size
         available_space = remaining_length - remaining_min_space
@@ -77,7 +77,7 @@ def random_partition_sizes_jit(
                 actual_min_size,
                 actual_max_size + 1,  # +1 because torch.randint upper bound is exclusive
                 (1,),
-            ).item()
+            )
 
         # Special case for the last partition
         if is_last_part:
@@ -908,7 +908,7 @@ class IndFlexiPatchEmbed(FlexiBase):
             #     f"product_band: {first_product_band}, min_num_tokens: {min_num_tokens}, max_num_tokens: {max_num_tokens}"
             # )
 
-        partition_sizes = random_partition_sizes_jit(
+        partition_sizes = random_partition_sizes_compiled(
             num_tokens,
             lower_bounds,
             upper_bounds,

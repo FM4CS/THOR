@@ -56,7 +56,7 @@ def get_slopes(n):
         )
 
 
-@torch.jit.script
+@torch.compile(fullgraph=True)
 def get_alibi_points_thor(
     metadata: dict[str, dict[str, int]],
     available_groups: dict[str, list[str]],
@@ -105,7 +105,7 @@ def get_alibi_points_thor(
     return points
 
 
-@torch.jit.script
+@torch.compile(fullgraph=True)
 def get_alibi_thor(
     metadata: dict[str, dict[str, int]],
     available_groups: dict[str, list[str]],
@@ -207,7 +207,7 @@ def compact_alibi_to_dense(alibi: CompactAlibiSpec, batch_size: int | None = Non
     return dense_alibi
 
 
-@torch.jit.script
+@torch.compile(fullgraph=True)
 def alibi_cls_token_pad(alibi: torch.Tensor) -> torch.Tensor:
     """
     Pad the alibi tensor to include a cls token (distance 0).
