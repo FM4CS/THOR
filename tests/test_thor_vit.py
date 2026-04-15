@@ -206,19 +206,25 @@ def test_init_accepts_per_band_patch_size_seq_dict():
     assert model.ind_patch_embed.patch_size_seqs["S2:RE1"] == [8, 16]
 
 
-def test_init_rejects_per_band_patch_size_seq_dict_missing_channel():
+def test_init_warns_per_band_patch_size_seq_dict_missing_channel(caplog):
+    """Missing channels fall back to default patch size and emit a warning."""
     channels = {
         "S2:Red": {"GSD": 10, "patch_size": 16},
         "S2:RE1": {"GSD": 20, "patch_size": 16},
     }
-    with pytest.raises(ValueError, match="Missing flexivit_patch_size_seqs"):
-        tiny_encoder(
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        model = tiny_encoder(
             make_input_params(
                 channels=channels,
                 groups=[["S2:Red"], ["S2:RE1"]],
                 flexivit_patch_size_seqs={"S2:Red": [8, 16]},
             )
         )
+    assert any("Missing flexivit_patch_size_seqs" in r.message for r in caplog.records)
+    # S2:RE1 was missing from the dict — it should have fallen back to the default patch size
+    assert "S2:RE1" in model.ind_patch_embed.patch_size_seqs
 
 
 def test_init_two_groups():

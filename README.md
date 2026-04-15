@@ -66,6 +66,26 @@ model = BACKBONE_REGISTRY.build(
 )
 ```
 
+## Memory-efficient inference with FlexAttention
+
+THOR uses 2D ALiBi (Attention with Linear Biases) for position encoding, which normally requires materializing an N×N bias matrix per attention head. For large token counts this becomes the dominant memory cost.
+
+At inference time THOR can instead use PyTorch's [`flex_attention`](https://pytorch.org/docs/stable/nn.attention.flex_attention.html) with a compact representation that avoids allocating that matrix entirely. Rather than storing the full `(H, N, N)` bias tensor, only the 1D x/y coordinate vectors of shape `(N,)` are kept alongside the head slopes. The ALiBi bias for any query–key pair is then computed on-the-fly inside the attention kernel via a `score_mod` closure.
+
+This reduces the position-encoding memory footprint from O(H·N²) to O(H + N).
+
+### Requirements
+
+- PyTorch ≥ 2.6
+
+### Enabling
+
+```bash
+USE_FLEX_ATTENTION=1 python your_script.py
+```
+
+Flex attention is **off by default** and only activates during eval (training still uses the standard dense ALiBi path with SDPA). When enabled, the attention kernel is compiled once with `torch.compile` for additional throughput. Compilation can be disabled by setting `COMPILE_FLEX_ATTENTION=0`.
+
 ## Model Training
 
 ### Pretrain THOR architecture on THOR-Pretrain data from scratch
