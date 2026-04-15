@@ -73,15 +73,19 @@ def _normalize_flexivit_patch_size_seqs(
         missing_product_bands = sorted(set(channels) - set(patch_size_seqs))
         unknown_product_bands = sorted(set(patch_size_seqs) - set(channels))
         if missing_product_bands:
-            msg = f"Missing flexivit_patch_size_seqs entries for channels: {missing_product_bands}"
-            raise ValueError(msg)
+            msg = f"Missing flexivit_patch_size_seqs entries for channels: {missing_product_bands},"
+            f" will use default patch size {default_patch_size} for these channels."
+            logger.warning(msg, stacklevel=2)
         if unknown_product_bands:
             msg = f"Unknown flexivit_patch_size_seqs channels: {unknown_product_bands}"
             raise ValueError(msg)
-        return {
+        result = {
             product_band: _normalize_flexivit_patch_size_seq_value(product_patch_sizes)
             for product_band, product_patch_sizes in patch_size_seqs.items()
         }
+        for missing in missing_product_bands:
+            result[missing] = [default_patch_size]
+        return result
 
     shared_patch_sizes = _normalize_flexivit_patch_size_seq_value(patch_size_seqs)
     return {product_band: list(shared_patch_sizes) for product_band in channels}
