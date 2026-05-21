@@ -66,6 +66,9 @@ dev = [
 ]
 
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [[tool.mypy.overrides]]
 module = "timm"
 ignore_missing_imports = true

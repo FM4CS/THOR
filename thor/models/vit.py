@@ -12,9 +12,9 @@ from functools import partial, reduce
 from operator import mul
 
 import torch
+from timm.layers import PatchEmbed
 from timm.layers.helpers import to_2tuple
-from timm.models.helpers import build_model_with_cfg, resolve_pretrained_cfg
-from timm.models.layers import PatchEmbed
+from timm.models import build_model_with_cfg, resolve_pretrained_cfg
 from timm.models.vision_transformer import VisionTransformer, _cfg, checkpoint_filter_fn
 from torch import nn
 

@@ -4,7 +4,7 @@ from functools import partial
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from thor.models.thor_vit import (
     ThorViTEncoder,
@@ -180,6 +180,53 @@ def test_init_cls_token():
     assert model.num_prefix_tokens == 1
 
 
+def test_init_accepts_global_int_patch_size_seq():
+    model = tiny_encoder(make_input_params(flexivit_patch_size_seqs=16))
+    assert model.ind_patch_embed.patch_size_seqs["S2:Red"] == [16]
+
+
+def test_init_accepts_per_band_patch_size_seq_dict():
+    channels = {
+        "S2:Red": {"GSD": 10, "patch_size": 16},
+        "S2:RE1": {"GSD": 20, "patch_size": 16},
+    }
+    patch_size_seqs = {
+        "S2:Red": 8,
+        "S2:RE1": [8, 16],
+    }
+    model = tiny_encoder(
+        make_input_params(
+            channels=channels,
+            groups=[["S2:Red"], ["S2:RE1"]],
+            flexivit_patch_size_seqs=patch_size_seqs,
+        )
+    )
+
+    assert model.ind_patch_embed.patch_size_seqs["S2:Red"] == [8]
+    assert model.ind_patch_embed.patch_size_seqs["S2:RE1"] == [8, 16]
+
+
+def test_init_warns_per_band_patch_size_seq_dict_missing_channel(caplog):
+    """Missing channels fall back to default patch size and emit a warning."""
+    channels = {
+        "S2:Red": {"GSD": 10, "patch_size": 16},
+        "S2:RE1": {"GSD": 20, "patch_size": 16},
+    }
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        model = tiny_encoder(
+            make_input_params(
+                channels=channels,
+                groups=[["S2:Red"], ["S2:RE1"]],
+                flexivit_patch_size_seqs={"S2:Red": [8, 16]},
+            )
+        )
+    assert any("Missing flexivit_patch_size_seqs" in r.message for r in caplog.records)
+    # S2:RE1 was missing from the dict — it should have fallen back to the default patch size
+    assert "S2:RE1" in model.ind_patch_embed.patch_size_seqs
+
+
 def test_init_two_groups():
     channels = {
         "S2:Red": {"GSD": 10, "patch_size": 16},
@@ -200,6 +247,27 @@ def test_init_validate_group_raises_on_gsd_mismatch():
     groups = [["S2:Red", "S2:RE1"]]
     with pytest.raises(ValueError, match="GSD"):
         tiny_encoder(make_input_params(channels=channels, groups=groups))
+
+
+def test_init_non_flexivit_uses_per_band_min_patch_size_seq_for_num_patch():
+    channels = {
+        "S2:Red": {"GSD": 10, "patch_size": 16},
+        "S2:RE1": {"GSD": 20, "patch_size": 16},
+    }
+    model = tiny_encoder(
+        make_input_params(
+            channels=channels,
+            groups=[["S2:Red"], ["S2:RE1"]],
+            use_flexivit=False,
+            flexivit_patch_size_seqs={
+                "S2:Red": [8, 16],
+                "S2:RE1": 16,
+            },
+        )
+    )
+
+    assert model.channels["S2:Red"]["num_patch"] == GROUND_COVER // 10 // 8
+    assert model.channels["S2:RE1"]["num_patch"] == GROUND_COVER // 20 // 16
 
 
 # ---------------------------------------------------------------------------
@@ -243,9 +311,7 @@ def test_aggregate_by_group_mean():
         "S2:Red": {"GSD": 10, "patch_size": 16},
         "S2:Green": {"GSD": 10, "patch_size": 16},
     }
-    model = tiny_encoder(
-        make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="mean")
-    )
+    model = tiny_encoder(make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="mean"))
     B, N, D = 2, NUM_PATCHES_10M, 64
     patch_embed = {
         "S2:Red": torch.ones(B, N, D),
@@ -261,9 +327,7 @@ def test_aggregate_by_group_subsetmean_missing_band():
         "S2:Red": {"GSD": 10, "patch_size": 16},
         "S2:Green": {"GSD": 10, "patch_size": 16},
     }
-    model = tiny_encoder(
-        make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="subsetmean")
-    )
+    model = tiny_encoder(make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="subsetmean"))
     B, N, D = 2, NUM_PATCHES_10M, 64
     patch_embed = {"S2:Red": torch.ones(B, N, D) * 7.0}  # S2:Green absent
     result = model.aggregate_by_group(patch_embed, {"group0": ["S2:Red", "S2:Green"]})
@@ -275,9 +339,7 @@ def test_aggregate_by_group_sum():
         "S2:Red": {"GSD": 10, "patch_size": 16},
         "S2:Green": {"GSD": 10, "patch_size": 16},
     }
-    model = tiny_encoder(
-        make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="sum")
-    )
+    model = tiny_encoder(make_input_params(channels=channels, groups=[["S2:Red", "S2:Green"]], aggr_type="sum"))
     B, N, D = 1, NUM_PATCHES_10M, 64
     patch_embed = {
         "S2:Red": torch.ones(B, N, D) * 2.0,

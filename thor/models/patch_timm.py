@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 ddp_flex_available = torch.torch_version.Version(torch.__version__) >= torch.torch_version.Version("2.6")
 USE_FLEX_ATTENTION = os.environ.get("USE_FLEX_ATTENTION", "0") == "1"
+COMPILE_FLEX_ATTENTION = os.environ.get("COMPILE_FLEX_ATTENTION", "1") == "1"
+FLEX_ATTENTION_COMPILE_MODE = os.environ.get("FLEX_ATTENTION_COMPILE_MODE")
 
 
 def use_flex_attn() -> bool:
@@ -24,11 +27,97 @@ if use_flex_attn():
     from torch.nn.attention.flex_attention import flex_attention
 
 
-def _alibi_attn_forward(self, x: torch.Tensor, alibi: torch.Tensor | None = None) -> torch.Tensor:
+_COMPILED_FLEX_ATTENTION: Any | None = None
+
+
+def _get_flex_attention_compile_kwargs() -> dict[str, Any]:
+    compile_kwargs: dict[str, Any] = {"dynamic": True}
+    if FLEX_ATTENTION_COMPILE_MODE:
+        compile_kwargs["mode"] = FLEX_ATTENTION_COMPILE_MODE
+    return compile_kwargs
+
+
+def _supports_compiled_flex_attention_inputs(q: torch.Tensor, v: torch.Tensor) -> bool:
+    if q.device.type != "cuda":
+        return False
+    return q.shape[-1] >= 16 and v.shape[-1] >= 16
+
+
+def clear_flex_attention_impl_cache() -> None:
+    global _COMPILED_FLEX_ATTENTION
+    _COMPILED_FLEX_ATTENTION = None
+
+
+def get_flex_attention_impl(q: torch.Tensor | None = None, v: torch.Tensor | None = None):
+    if not use_flex_attn():
+        msg = "Flex attention is not enabled."
+        raise RuntimeError(msg)
+
+    if not COMPILE_FLEX_ATTENTION:
+        return flex_attention
+
+    if q is not None and v is not None and not _supports_compiled_flex_attention_inputs(q, v):
+        return flex_attention
+
+    global _COMPILED_FLEX_ATTENTION
+    if _COMPILED_FLEX_ATTENTION is None:
+        logger.info("Compiling flex_attention for fused attention kernels")
+        _COMPILED_FLEX_ATTENTION = torch.compile(flex_attention, **_get_flex_attention_compile_kwargs())
+    return _COMPILED_FLEX_ATTENTION
+
+
+def _make_compact_alibi_score_mod(
+    q_x: torch.Tensor,
+    k_x: torch.Tensor,
+    q_y: torch.Tensor,
+    k_y: torch.Tensor,
+    slopes: torch.Tensor,
+    num_prefix_tokens: int,
+):
+    def apply_alibi(score, b, h, q_idx, kv_idx):
+        prefix_mask = (q_idx < num_prefix_tokens) | (kv_idx < num_prefix_tokens)
+        q_patch_idx = torch.clamp(q_idx - num_prefix_tokens, min=0)
+        kv_patch_idx = torch.clamp(kv_idx - num_prefix_tokens, min=0)
+
+        dx = q_x[q_patch_idx] - k_x[kv_patch_idx]
+        dy = q_y[q_patch_idx] - k_y[kv_patch_idx]
+        distance = torch.sqrt(dx * dx + dy * dy)
+        bias = -slopes[h] * (distance + num_prefix_tokens)
+        return torch.where(prefix_mask, score, score + bias)
+
+    return apply_alibi
+
+
+def _is_compact_alibi(alibi: Any | None) -> bool:
+    return alibi is not None and all(
+        hasattr(alibi, attr) for attr in ("q_x", "k_x", "q_y", "k_y", "slopes", "num_prefix_tokens")
+    )
+
+
+def _compact_alibi_to_dense(alibi: Any, batch_size: int) -> torch.Tensor:
+    """Materialise a CompactAlibiSpec into a dense (B, H, N+P, N+P) bias tensor."""
+    dx = alibi.q_x.unsqueeze(1) - alibi.k_x.unsqueeze(0)
+    dy = alibi.q_y.unsqueeze(1) - alibi.k_y.unsqueeze(0)
+    distances = torch.sqrt(dx * dx + dy * dy)
+    dense = -alibi.slopes.unsqueeze(-1).unsqueeze(-1) * (distances.unsqueeze(0) + alibi.num_prefix_tokens)
+    p = alibi.num_prefix_tokens
+    dense = F.pad(dense, (p, 0, p, 0), value=0.0)
+    return dense.expand(batch_size, -1, -1, -1)
+
+
+def _is_head_dim_power_of_two(n: int) -> bool:
+    return n > 0 and (n & (n - 1)) == 0
+
+
+def _alibi_attn_forward(self, x: torch.Tensor, alibi: Any | None = None) -> torch.Tensor:
     B, N, C = x.shape
     qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
     q, k, v = qkv.unbind(0)
     q, k = self.q_norm(q), self.k_norm(k)
+
+    if _is_compact_alibi(alibi):
+        msg = "Compact ALiBi requires flex attention and is not supported by the dense attention fallback."
+        raise TypeError(msg)
 
     if self.fused_attn:
         x = F.scaled_dot_product_attention(
@@ -53,14 +142,9 @@ def _alibi_attn_forward(self, x: torch.Tensor, alibi: torch.Tensor | None = None
     return x
 
 
-def _alibi_attn_flex_forward(self, x: torch.Tensor, alibi: torch.Tensor | None = None) -> torch.Tensor:
-    def is_power_of_two(n):
-        if n <= 0:
-            return False
-        return (n & (n - 1)) == 0
-
-    if not is_power_of_two(self.head_dim):
-        msg = f"head_dim {self.head_dim} is not a power of 2, please use a power of 2 for the head_dim for flexi attention to work"
+def _alibi_attn_flex_forward(self, x: torch.Tensor, alibi: Any | None = None) -> torch.Tensor:
+    if not _is_head_dim_power_of_two(self.head_dim):
+        msg = f"head_dim {self.head_dim} is not a power of 2, required for flex attention"
         raise ValueError(msg)
 
     B, N, C = x.shape
@@ -68,19 +152,24 @@ def _alibi_attn_flex_forward(self, x: torch.Tensor, alibi: torch.Tensor | None =
     q, k, v = qkv.unbind(0)
     q, k = self.q_norm(q), self.k_norm(k)
 
-    # B, Hq, L, E
-    def apply_alibi(score, b, h, q_idx, kv_idx):
-        if alibi is None:
-            return score
-        bias = alibi[b, h, q_idx, kv_idx]
-        return score + bias
-
-    x = flex_attention(
-        q,
-        k,
-        v,
-        score_mod=apply_alibi,
-    )
+    dropout_p = self.attn_drop.p if self.training else 0.0
+    if _is_compact_alibi(alibi) and _supports_compiled_flex_attention_inputs(q, v):
+        score_mod = _make_compact_alibi_score_mod(
+            alibi.q_x,
+            alibi.k_x,
+            alibi.q_y,
+            alibi.k_y,
+            alibi.slopes,
+            alibi.num_prefix_tokens,
+        )
+        kernel_options = {"DROPOUT_P": dropout_p} if dropout_p > 0.0 else {}
+        x = get_flex_attention_impl(q, v)(q, k, v, score_mod=score_mod, kernel_options=kernel_options)
+    else:
+        # Dense tensor, None, or compact alibi on a device that doesn't support the compiled
+        # flex kernel (CPU / head_dim < 16). Materialise the bias if needed and use SDPA.
+        if _is_compact_alibi(alibi):
+            alibi = _compact_alibi_to_dense(alibi, batch_size=B)
+        x = F.scaled_dot_product_attention(q, k, v, attn_mask=alibi, dropout_p=dropout_p)
 
     x = x.transpose(1, 2).reshape(B, N, C)
     x = self.proj(x)
@@ -88,7 +177,7 @@ def _alibi_attn_flex_forward(self, x: torch.Tensor, alibi: torch.Tensor | None =
     return x
 
 
-def _alibi_block_forward(self, x: torch.Tensor, attn_mask: torch.Tensor | None = None) -> torch.Tensor:
+def _alibi_block_forward(self, x: torch.Tensor, attn_mask: Any | None = None) -> torch.Tensor:
     x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x), attn_mask)))
     x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
     return x
