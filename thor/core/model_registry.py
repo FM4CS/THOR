@@ -39,6 +39,127 @@ class ModelRegistry:
     def get_model(self, model_name: str) -> nn.Module:
         return self.models[model_name]
 
+    def _apply_ckpt_init_from(self, model, model_state_dict, ckpt_init_from):
+        """Initialize new modality weights from existing checkpoint weights.
+
+        Config format:
+            ckpt_init_from:
+                channels:
+                    "NewSensor:BandA": "S2:Red"     # Clone Conv2d patch embed weights
+                    "NewSensor:BandB": "S2:Green"
+                groups:
+                    "group10": "group0"             # Clone band_embed from source group
+                clone_prod_embed: false             # If true, clone prod_embed from source product;
+                                                    # default false uses model's sincos init
+        """
+        channel_map = ckpt_init_from.get("channels", {})
+        group_map = ckpt_init_from.get("groups", {})
+        clone_prod_embed = ckpt_init_from.get("clone_prod_embed", False)
+
+        # Resolve channel_rename_map if available
+        rename_map = {}
+        if hasattr(model, "ind_patch_embed") and hasattr(model.ind_patch_embed, "channel_rename_map"):
+            rename_map = model.ind_patch_embed.channel_rename_map
+        elif hasattr(model, "channel_rename_map"):
+            rename_map = model.channel_rename_map
+
+        # Clone patch embed Conv2d weights for new channels
+        for dst_channel, src_channel in channel_map.items():
+            dst_name = rename_map.get(dst_channel, dst_channel)
+            src_name = rename_map.get(src_channel, src_channel)
+
+            for suffix in ("weight", "bias"):
+                src_key = f"ind_patch_embed.patch_embed.{src_name}.{suffix}"
+                dst_key = f"ind_patch_embed.patch_embed.{dst_name}.{suffix}"
+
+                if src_key not in model_state_dict:
+                    logger.warning(
+                        f"ckpt_init_from: source key '{src_key}' not found in checkpoint, "
+                        f"skipping clone for '{dst_channel}' -> '{src_channel}'"
+                    )
+                    continue
+
+                # Only clone if the destination key is expected by the model
+                if dst_key in model.state_dict():
+                    cloned = model_state_dict[src_key].clone()
+                    if suffix == "weight":
+                        dst_shape = model.state_dict()[dst_key].shape
+                        if cloned.shape[2:] != dst_shape[2:]:
+                            cloned = pi_resize_patch_embed(cloned, tuple(dst_shape[2:]))
+                    model_state_dict[dst_key] = cloned
+                    logger.info(f"ckpt_init_from: cloned {src_key} -> {dst_key}")
+
+        # Clone band_embed for new groups
+        for dst_group, src_group in group_map.items():
+            src_key = f"band_embed.{src_group}"
+            dst_key = f"band_embed.{dst_group}"
+
+            if src_key not in model_state_dict:
+                logger.warning(
+                    f"ckpt_init_from: source key '{src_key}' not found in checkpoint, "
+                    f"skipping clone for '{dst_group}' -> '{src_group}'"
+                )
+                continue
+
+            if dst_key in model.state_dict():
+                model_state_dict[dst_key] = model_state_dict[src_key].clone()
+                logger.info(f"ckpt_init_from: cloned {src_key} -> {dst_key}")
+
+        if channel_map:
+            model_sd = model.state_dict()
+
+            # Build channel -> group lookup from the model
+            channel_to_group: dict[str, str] = {}
+            groups_attr = None
+            if hasattr(model, "ind_patch_embed") and hasattr(model.ind_patch_embed, "groups"):
+                groups_attr = model.ind_patch_embed.groups
+            elif hasattr(model, "groups"):
+                groups_attr = model.groups
+            if groups_attr is not None:
+                for group_name, members in groups_attr.items():
+                    for member in members:
+                        channel_to_group[member] = group_name
+
+            # Auto-fill band_embed for new groups introduced by channel_map.
+            # Explicit group_map entries already handle the clone case; here we
+            # use the model's default sincos init for groups not otherwise covered.
+            for dst_channel in channel_map:
+                group_name = channel_to_group.get(dst_channel)
+                if group_name is None:
+                    continue
+                band_embed_key = f"band_embed.{group_name}"
+                if band_embed_key in model_sd and band_embed_key not in model_state_dict:
+                    model_state_dict[band_embed_key] = model_sd[band_embed_key].clone()
+                    logger.info(
+                        f"ckpt_init_from: initialized band_embed for new group '{group_name}' from model default"
+                    )
+
+            # Fill prod_embed for new products.
+            # clone_prod_embed=True  → clone from source product in model_state_dict
+            # clone_prod_embed=False → use model's default sincos init (default)
+            for dst_channel, src_channel in channel_map.items():
+                dst_product = dst_channel.split(":")[0]
+                src_product = src_channel.split(":")[0]
+                prod_embed_key = f"prod_embed.{dst_product}"
+                if prod_embed_key not in model_sd or prod_embed_key in model_state_dict:
+                    continue
+                if clone_prod_embed:
+                    src_prod_key = f"prod_embed.{src_product}"
+                    if src_prod_key in model_state_dict:
+                        model_state_dict[prod_embed_key] = model_state_dict[src_prod_key].clone()
+                        logger.info(f"ckpt_init_from: cloned prod_embed {src_prod_key} -> {prod_embed_key}")
+                    else:
+                        logger.warning(
+                            f"ckpt_init_from: clone_prod_embed=True but '{src_prod_key}' not in checkpoint, "
+                            f"falling back to model default init for '{prod_embed_key}'"
+                        )
+                        model_state_dict[prod_embed_key] = model_sd[prod_embed_key].clone()
+                else:
+                    model_state_dict[prod_embed_key] = model_sd[prod_embed_key].clone()
+                    logger.info(
+                        f"ckpt_init_from: initialized prod_embed for new product '{dst_product}' from model default"
+                    )
+
     def build(self, model_cfgs) -> nn.Module:
         if model_cfgs.get("name", None) is not None:  # single model config
             model_cfgs = {model_cfgs["name"]: model_cfgs}
@@ -63,6 +184,7 @@ class ModelRegistry:
             ckpt_ignore = model_cfg.get("ckpt_ignore", [])
             ckpt_copy = model_cfg.get("ckpt_copy", [])
             ckpt_remap = model_cfg.get("ckpt_remap", {})
+            ckpt_init_from = model_cfg.get("ckpt_init_from", {})
             strict = model_cfg.get("strict", True)
             resize_patch_embed = model_cfg.get("resize_patch_embed", False)
             target_model = model_cfg.get("target_model", model_name)
@@ -147,6 +269,10 @@ class ModelRegistry:
                             model_state_dict[patch_embed_key] = pi_resize_patch_embed(
                                 model_state_dict[patch_embed_key], new_patch_size
                             )
+
+                # Initialize new modalities from existing checkpoint weights
+                if ckpt_init_from:
+                    self._apply_ckpt_init_from(model, model_state_dict, ckpt_init_from)
 
                 # Interpolate pos embedding if necessary
                 pos_embed_keys = [f"pos_embed.{k}" for k in model.pos_embed.keys()]
